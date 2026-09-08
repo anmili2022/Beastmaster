@@ -68,8 +68,7 @@ public sealed class BeastmasterNavigationService : IDisposable
         SetMapFlag(location);
         if (DalamudApi.ClientState.TerritoryType != location.TerritoryType)
         {
-            DalamudApi.ChatGui.Print($"[驯兽师助手] 目标位于 {location.Zone}，请先前往该区域后再次点击导航。");
-            return false;
+            return TeleportAndContinue(location);
         }
 
         try

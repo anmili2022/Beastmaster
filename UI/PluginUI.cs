@@ -197,6 +197,16 @@ public sealed class PluginUI
         ImGui.ProgressBar((float)completedCount / quests.Count, new Vector2(-1f, 0f), $"{completedCount}/{quests.Count}");
         ImGui.Spacing();
 
+        var hideCompleted = configuration.HideCompletedQuests;
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.82f, 0.25f, 1f));
+        if (ImGui.Checkbox("隐藏已完成任务", ref hideCompleted))
+        {
+            configuration.HideCompletedQuests = hideCompleted;
+            configuration.Save();
+        }
+        ImGui.PopStyleColor();
+        ImGui.Separator();
+
         foreach (var quest in quests)
         {
             if (quest.RowId == 0)
