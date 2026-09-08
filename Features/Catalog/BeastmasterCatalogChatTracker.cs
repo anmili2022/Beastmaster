@@ -7,7 +7,7 @@ public sealed partial class BeastmasterCatalogChatTracker : IDisposable
     private static readonly IReadOnlyDictionary<string, string> CaptureNameAliases =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["迷途羊羔"] = "羊羔",
+            ["羊羔"] = "迷途羊羔",
         };
 
     private readonly BeastmasterProgressService progressService;

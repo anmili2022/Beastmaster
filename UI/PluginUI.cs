@@ -1,4 +1,5 @@
 using Dalamud.Bindings.ImGui;
+using System.Diagnostics;
 using System.Numerics;
 
 namespace Beastmaster;
@@ -312,6 +313,15 @@ public sealed class PluginUI
         if (ImGui.Button("停止导航##catalog-stop-navigation"))
         {
             navigationService.Stop();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("WIKI"))
+        {
+            Process.Start(new ProcessStartInfo("https://ff14.huijiwiki.com/wiki/%E9%AD%94%E5%85%BD%E5%9B%BE%E9%89%B4")
+            {
+                UseShellExecute = true,
+            });
         }
 
         ImGui.TextDisabled("捕获成功时自动记录，也可按当前角色手动修改完成状态。");
