@@ -97,6 +97,16 @@ public sealed class PluginUI
         ImGui.Separator();
         DrawSidebarLabel("工具");
         DrawSidebarButton(MainSections[3]);
+
+        if (ImGui.Button("反馈与建议", new Vector2(ImGui.GetContentRegionAvail().X, 30f)))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                "https://discord.com/channels/1258981591124938762/1546882305686118420")
+            {
+                UseShellExecute = true,
+            });
+        }
+
         DrawSidebarButton(MainSections[4]);
     }
 

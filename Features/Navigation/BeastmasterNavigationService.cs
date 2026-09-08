@@ -256,9 +256,18 @@ public sealed class BeastmasterNavigationService : IDisposable
             return;
         }
 
+        if (DalamudApi.Condition[ConditionFlag.BetweenAreas])
+        {
+            return;
+        }
+
         if (DateTime.UtcNow - pendingStartedUtc < TimeSpan.FromSeconds(4)
-            || DalamudApi.ClientState.TerritoryType != pendingLocation.TerritoryType
             || DalamudApi.ObjectTable.LocalPlayer == null)
+        {
+            return;
+        }
+
+        if (DalamudApi.ClientState.TerritoryType != pendingLocation.TerritoryType)
         {
             return;
         }
