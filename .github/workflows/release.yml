@@ -1,0 +1,107 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - '*.*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $ver = '${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}'
+          if ([string]::IsNullOrWhiteSpace($ver)) {
+            throw 'Release version is empty.'
+          }
+          $assemblyVer = $ver
+          if ($assemblyVer.StartsWith('v')) {
+            $assemblyVer = $assemblyVer.Substring(1)
+          }
+          "RELEASE_VERSION=$ver" >> $env:GITHUB_ENV
+          "ASSEMBLY_VERSION=$assemblyVer" >> $env:GITHUB_ENV
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '9.0.x'
+          cache: true
+          cache-dependency-path: packages.lock.json
+
+      - name: Clean output
+        shell: pwsh
+        run: |
+          if (Test-Path ./output) {
+            Remove-Item ./output -Recurse -Force
+          }
+
+      - name: Download Dalamud CN
+        shell: pwsh
+        run: |
+          $dalamudPath = "$env:AppData\XIVLauncherCN\addon\Hooks\dev\"
+          New-Item -ItemType Directory -Force -Path $dalamudPath | Out-Null
+          Invoke-WebRequest -Uri "https://goatcorp.github.io/dalamud-distrib/stg/latest.zip" -OutFile dalamud.zip -UseBasicParsing
+          Expand-Archive -Force dalamud.zip $dalamudPath
+
+      - name: Restore dependencies
+        shell: pwsh
+        run: dotnet restore ./Beastmaster.csproj
+
+      - name: Build release package
+        shell: pwsh
+        run: |
+          $dalamudPath = "$env:AppData\XIVLauncherCN\addon\Hooks\dev\"
+          dotnet build ./Beastmaster.csproj `
+            --configuration Release `
+            --no-restore `
+            --nologo `
+            -p:DalamudLibPath="$dalamudPath" `
+            -p:Version="$env:ASSEMBLY_VERSION" `
+            -p:FileVersion="$env:ASSEMBLY_VERSION" `
+            -p:AssemblyVersion="$env:ASSEMBLY_VERSION"
+
+      - name: Update output manifest version
+        shell: pwsh
+        run: |
+          $path = './output/Beastmaster.json'
+          if (-not (Test-Path $path)) {
+            throw 'Output manifest was not generated.'
+          }
+          $json = Get-Content -Raw -Encoding UTF8 $path | ConvertFrom-Json
+          $json.AssemblyVersion = $env:ASSEMBLY_VERSION
+          $json | ConvertTo-Json -Depth 10 | Set-Content -Path $path -Encoding utf8
+
+      - name: Archive release asset
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path ./output/Beastmaster.dll,./output/Beastmaster.json,./output/Beastmaster.deps.json `
+            -DestinationPath ./Beastmaster.zip `
+            -Force
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: Beastmaster ${{ env.RELEASE_VERSION }}
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
+          files: ./Beastmaster.zip
+          fail_on_unmatched_files: true
