@@ -21,6 +21,7 @@ public sealed class PluginUI
     private readonly BeastmasterQuestService questService;
     private readonly BeastmasterNavigationService navigationService;
     private readonly BeastmasterDebugDataService debugDataService;
+    private readonly BeastmasterAutoCaptureService autoCaptureService;
     private string debugQuery = "驯兽";
     private string debugResult = "点击按钮读取客户端资料。";
     private DateTime nextQuestStatusRefreshUtc = DateTime.MinValue;
@@ -31,13 +32,15 @@ public sealed class PluginUI
         BeastmasterProgressService progressService,
         BeastmasterQuestService questService,
         BeastmasterNavigationService navigationService,
-        BeastmasterDebugDataService debugDataService)
+        BeastmasterDebugDataService debugDataService,
+        BeastmasterAutoCaptureService autoCaptureService)
     {
         this.configuration = configuration;
         this.progressService = progressService;
         this.questService = questService;
         this.navigationService = navigationService;
         this.debugDataService = debugDataService;
+        this.autoCaptureService = autoCaptureService;
     }
 
     public void OpenMainWindow()
@@ -47,6 +50,7 @@ public sealed class PluginUI
 
     public void Draw()
     {
+        DrawAutoCaptureOverlay();
         if (!isMainWindowOpen)
         {
             return;
@@ -61,6 +65,35 @@ public sealed class PluginUI
         }
 
         DrawMainShell();
+        ImGui.End();
+    }
+
+    private void DrawAutoCaptureOverlay()
+    {
+        if (!autoCaptureService.IsEnabled)
+        {
+            return;
+        }
+
+        ImGui.SetNextWindowPos(new Vector2(20f, 180f), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowBgAlpha(0.9f);
+        if (!ImGui.Begin(
+                "自动捕获##BeastmasterAutoCaptureOverlay",
+                ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar))
+        {
+            ImGui.End();
+            return;
+        }
+
+        ImGui.TextColored(new Vector4(0.35f, 0.85f, 0.55f, 1f), autoCaptureService.StatusText);
+        ImGui.Text($"下一个技能：{autoCaptureService.NextActionName}");
+        ImGui.Separator();
+        var tryCapture = autoCaptureService.TryCapture;
+        if (ImGui.Checkbox("尝试捕获", ref tryCapture))
+        {
+            autoCaptureService.SetTryCapture(tryCapture);
+        }
+
         ImGui.End();
     }
 
@@ -283,7 +316,7 @@ public sealed class PluginUI
 
             if (ImGui.Button($"导航到任务目标##target-{quest.RowId}") && hasTarget)
             {
-                navigationService.Navigate(target!);
+                navigationService.NavigateQuestTarget(target!);
             }
 
             if (!hasTarget)
@@ -476,11 +509,23 @@ public sealed class PluginUI
 
         ImGui.Text("依赖插件");
         DrawDependency("vnavmesh", navigationService.IsVnavmeshInstalled, "同地图路径规划与移动");
-        DrawDependency("Lifestream", navigationService.IsLifestreamInstalled, "跨地图传送，当前版本尚未接入自动传送");
+        DrawDependency("Lifestream", navigationService.IsLifestreamInstalled, "跨地图传送");
         ImGui.Spacing();
 
         ImGui.Text("常用设置");
         ImGui.TextDisabled($"当前角色：{progressService.CurrentCharacterLabel}");
+        var autoCaptureEnabled = autoCaptureService.IsEnabled;
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.82f, 0.25f, 1f));
+        if (ImGui.Checkbox("自动捕获", ref autoCaptureEnabled))
+        {
+            autoCaptureService.SetEnabled(autoCaptureEnabled);
+        }
+        ImGui.PopStyleColor();
+        ImGui.TextDisabled("仅对当前手动选择的敌对目标生效；无捕获状态时优先捕获，再执行 1→2→3 连击。");
+        if (autoCaptureEnabled && ImGui.Button("停止自动捕获"))
+        {
+            autoCaptureService.SetEnabled(false);
+        }
         DrawSettingCheckbox("隐藏已完成任务", "任务页只显示未完成的驯兽师任务。", nameof(configuration.HideCompletedQuests), configuration.HideCompletedQuests);
         DrawSettingCheckbox("捕获消息自动记录", "收到成功结识消息时自动标记图鉴完成。", nameof(configuration.AutoCompleteCatalogFromChat), configuration.AutoCompleteCatalogFromChat);
         ImGui.Spacing();
@@ -558,6 +603,12 @@ public sealed class PluginUI
         if (ImGui.Button("读取图鉴副本 ID"))
         {
             debugResult = debugDataService.FindCatalogDuties();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("读取自动捕获 ID"))
+        {
+            debugResult = debugDataService.FindAutoCaptureData();
         }
 
         if (ImGui.Button("读取当前角色"))

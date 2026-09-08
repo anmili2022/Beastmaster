@@ -1,4 +1,5 @@
 using Lumina.Excel.Sheets;
+using Dalamud.Game.ClientState.Objects.Types;
 using System.Globalization;
 using System.Numerics;
 using System.Text;
@@ -198,6 +199,75 @@ public sealed class BeastmasterDebugDataService
                     ? territory.PlaceName.Value.Name.ExtractText()
                     : string.Empty;
                 builder.AppendLine($"  ContentFinderCondition.RowId={duty.RowId} | TerritoryType={duty.TerritoryType.RowId} | Map.RowId={duty.TerritoryType.Value.Map.RowId} | 区域={territoryName}");
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public string FindAutoCaptureData()
+    {
+        string[] actionNames = ["碎击斩", "碎咬斧", "裂盾劈", "捕获"];
+        var actions = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>();
+        var statuses = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Status>();
+        var builder = new StringBuilder()
+            .AppendLine("类型: 自动捕获技能与状态 ID")
+            .AppendLine("技能 Action:");
+
+        foreach (var name in actionNames)
+        {
+            var matches = actions
+                .Where(action => action.RowId != 0
+                    && action.Name.ExtractText().Equals(name, StringComparison.Ordinal))
+                .OrderBy(action => action.RowId)
+                .ToArray();
+            if (matches.Length == 0)
+            {
+                builder.AppendLine($"  {name}: 未找到");
+                continue;
+            }
+
+            foreach (var action in matches)
+            {
+                builder.AppendLine($"  {name}: Action.RowId={action.RowId} | ClassJob={action.ClassJob.RowId} | 等级={action.ClassJobLevel} | 射程={action.Range}");
+            }
+        }
+
+        builder.AppendLine("状态 Status:");
+        var captureStatuses = statuses
+            .Where(status => status.RowId != 0
+                && status.Name.ExtractText().Equals("捕获", StringComparison.Ordinal))
+            .OrderBy(status => status.RowId)
+            .ToArray();
+        if (captureStatuses.Length == 0)
+        {
+            builder.AppendLine("  捕获: 未找到");
+        }
+        else
+        {
+            foreach (var status in captureStatuses)
+            {
+                builder.AppendLine($"  捕获: Status.RowId={status.RowId}");
+            }
+        }
+
+        builder.AppendLine("当前目标状态:");
+        if (DalamudApi.TargetManager.Target is not IBattleChara target)
+        {
+            builder.AppendLine("  当前未选择战斗目标。");
+        }
+        else if (!target.StatusList.Any())
+        {
+            builder.AppendLine($"  {target.Name.TextValue}: 无状态。");
+        }
+        else
+        {
+            foreach (var status in target.StatusList.OrderBy(status => status.StatusId))
+            {
+                var statusName = statuses.TryGetRow(status.StatusId, out var statusRow)
+                    ? statusRow.Name.ExtractText()
+                    : string.Empty;
+                builder.AppendLine($"  StatusId={status.StatusId} | {statusName} | 剩余={status.RemainingTime:0.0}s | SourceId={status.SourceId}");
             }
         }
 

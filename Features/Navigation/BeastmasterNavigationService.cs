@@ -19,9 +19,8 @@ public sealed class BeastmasterNavigationService : IDisposable
     private readonly ICallGateSubscriber<Vector3, float, float, Vector3?> nearestPoint;
     private readonly ICallGateSubscriber<object> stop;
     private readonly ICallGateSubscriber<uint, byte, bool> teleport;
-    private readonly bool isVnavmeshInstalled;
-    private readonly bool isLifestreamInstalled;
     private BeastmasterQuestLocation? pendingLocation;
+    private bool pendingLocationUseFieldNavigation;
     private BeastmasterQuestLocation? pendingVnavLocation;
     private bool pendingVnavFieldNavigation;
     private DateTime nextVnavCheckUtc = DateTime.MinValue;
@@ -41,13 +40,11 @@ public sealed class BeastmasterNavigationService : IDisposable
         nearestPoint = pluginInterface.GetIpcSubscriber<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPoint");
         stop = pluginInterface.GetIpcSubscriber<object>("vnavmesh.Path.Stop");
         teleport = pluginInterface.GetIpcSubscriber<uint, byte, bool>("Lifestream.Teleport");
-        isVnavmeshInstalled = IsPluginLoaded("vnavmesh");
-        isLifestreamInstalled = IsPluginLoaded("Lifestream");
         DalamudApi.Framework.Update += OnFrameworkUpdate;
     }
 
-    public bool IsVnavmeshInstalled => isVnavmeshInstalled;
-    public bool IsLifestreamInstalled => isLifestreamInstalled;
+    public bool IsVnavmeshInstalled => IsPluginLoaded("vnavmesh");
+    public bool IsLifestreamInstalled => IsPluginLoaded("Lifestream");
 
     public void Dispose()
     {
@@ -62,7 +59,7 @@ public sealed class BeastmasterNavigationService : IDisposable
             return false;
         }
 
-        if (!isVnavmeshInstalled)
+        if (!IsVnavmeshInstalled)
         {
             DalamudApi.ChatGui.Print("[驯兽师助手] vnavmesh 未加载，无法开始导航。");
             return false;
@@ -71,7 +68,7 @@ public sealed class BeastmasterNavigationService : IDisposable
         SetMapFlag(location);
         if (DalamudApi.ClientState.TerritoryType != location.TerritoryType)
         {
-            return TeleportAndContinue(location);
+            return TeleportAndContinue(location, false);
         }
 
         try
@@ -101,6 +98,24 @@ public sealed class BeastmasterNavigationService : IDisposable
             DalamudApi.ChatGui.Print($"[驯兽师助手] 导航失败：{ex.Message}");
             return false;
         }
+    }
+
+    public bool NavigateQuestTarget(BeastmasterQuestLocation location)
+    {
+        if (DalamudApi.ObjectTable.LocalPlayer == null || !IsVnavmeshInstalled)
+        {
+            if (!IsVnavmeshInstalled)
+            {
+                DalamudApi.ChatGui.Print("[驯兽师助手] vnavmesh 未加载，无法开始导航。");
+            }
+
+            return false;
+        }
+
+        SetMapFlag(location);
+        return DalamudApi.ClientState.TerritoryType != location.TerritoryType
+            ? TeleportAndContinue(location, true)
+            : StartFieldNavigation(location);
     }
 
     public bool Navigate(BeastmasterCatalogEntry entry)
@@ -152,7 +167,7 @@ public sealed class BeastmasterNavigationService : IDisposable
         SetMapFlag(location);
         if (DalamudApi.ClientState.TerritoryType != location.TerritoryType)
         {
-            return TeleportAndContinue(location);
+            return TeleportAndContinue(location, true);
         }
 
         return StartFieldNavigation(location);
@@ -198,6 +213,7 @@ public sealed class BeastmasterNavigationService : IDisposable
     public void Stop()
     {
         pendingLocation = null;
+        pendingLocationUseFieldNavigation = false;
         pendingVnavLocation = null;
         pendingMountLocation = null;
         try
@@ -212,7 +228,7 @@ public sealed class BeastmasterNavigationService : IDisposable
 
     private bool StartFieldNavigation(BeastmasterQuestLocation location)
     {
-        if (!isVnavmeshInstalled || DalamudApi.ObjectTable.LocalPlayer == null)
+        if (!IsVnavmeshInstalled || DalamudApi.ObjectTable.LocalPlayer == null)
         {
             return false;
         }
@@ -262,9 +278,9 @@ public sealed class BeastmasterNavigationService : IDisposable
         }
     }
 
-    private bool TeleportAndContinue(BeastmasterQuestLocation location)
+    private bool TeleportAndContinue(BeastmasterQuestLocation location, bool useFieldNavigation)
     {
-        if (!isLifestreamInstalled)
+        if (!IsLifestreamInstalled)
         {
             DalamudApi.ChatGui.Print($"[驯兽师助手] 目标位于 {location.Zone}，Lifestream 未加载，请手动前往。 ");
             return false;
@@ -288,6 +304,7 @@ public sealed class BeastmasterNavigationService : IDisposable
             }
 
             pendingLocation = location;
+            pendingLocationUseFieldNavigation = useFieldNavigation;
             pendingStartedUtc = DateTime.UtcNow;
             DalamudApi.ChatGui.Print($"[驯兽师助手] 正在传送到 {location.Zone}，读图后将继续导航。 ");
             return true;
@@ -334,8 +351,17 @@ public sealed class BeastmasterNavigationService : IDisposable
         }
 
         var location = pendingLocation;
+        var useFieldNavigation = pendingLocationUseFieldNavigation;
         pendingLocation = null;
-        StartFieldNavigation(location);
+        pendingLocationUseFieldNavigation = false;
+        if (useFieldNavigation)
+        {
+            StartFieldNavigation(location);
+        }
+        else
+        {
+            Navigate(location);
+        }
     }
 
     private void ProcessPendingVnav()

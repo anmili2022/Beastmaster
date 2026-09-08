@@ -9,7 +9,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 4;
+    public int Version { get; set; } = 6;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -19,6 +19,8 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool UseFlightNavigation { get; set; } = true;
     public bool SetFlagOnNavigation { get; set; } = true;
     public bool ShowNavigationLogs { get; set; } = true;
+    public bool AutoCaptureEnabled { get; set; }
+    public bool AutoCaptureTryCapture { get; set; } = true;
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
         = new(StringComparer.Ordinal);
 
@@ -27,9 +29,9 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         this.pluginInterface = pluginInterface;
         ProgressByCharacter ??= new Dictionary<string, BeastmasterCharacterProgress>(StringComparer.Ordinal);
 
-        if (Version < 4)
+        if (Version < 6)
         {
-            Version = 4;
+            Version = 6;
             Save();
         }
     }
