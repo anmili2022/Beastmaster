@@ -1,4 +1,5 @@
 using Dalamud.Bindings.ImGui;
+using Lumina.Excel.Sheets;
 using System.Diagnostics;
 using System.Numerics;
 
@@ -371,6 +372,10 @@ public sealed class PluginUI
         }
 
         var currentTerritory = DalamudApi.ClientState.TerritoryType;
+        var currentMapName = DalamudApi.DataManager.GetExcelSheet<TerritoryType>()
+            .TryGetRow(currentTerritory, out var currentTerritoryRow)
+            ? currentTerritoryRow.Map.Value.PlaceName.Value.Name.ExtractText()
+            : string.Empty;
         var completedCount = entries.Count(entry => progressService.IsCompleted(entry.Key));
         ImGui.ProgressBar((float)completedCount / entries.Count, new Vector2(-1f, 0f), $"{completedCount}/{entries.Count}");
 
@@ -398,7 +403,7 @@ public sealed class PluginUI
         if (configuration.SortCatalogByLocation)
         {
             sortedEntries = displayedEntries
-                .OrderBy(entry => entry.TerritoryType != currentTerritory)
+                .OrderBy(entry => !entry.Location.Equals(currentMapName, StringComparison.Ordinal))
                 .ThenBy(entry => entry.Location, StringComparer.Ordinal)
                 .ThenBy(entry => entry.Number);
         }
@@ -437,10 +442,17 @@ public sealed class PluginUI
             ImGui.TableNextColumn();
             if (entry.LocationType == BeastmasterCatalogLocationType.Field
                 && entry.MapX.HasValue
-                && entry.MapY.HasValue
-                && ImGui.SmallButton($"导航##catalog-nav-{entry.Number}"))
+                && entry.MapY.HasValue)
             {
-                navigationService.Navigate(entry);
+                if (ImGui.SmallButton($"导航##catalog-nav-{entry.Number}"))
+                {
+                    navigationService.Navigate(entry);
+                }
+            }
+            else if (entry.LocationType == BeastmasterCatalogLocationType.Duty
+                && ImGui.SmallButton($"副本##catalog-duty-{entry.Number}"))
+            {
+                navigationService.OpenDutyFinder(entry);
             }
         }
 
@@ -541,6 +553,11 @@ public sealed class PluginUI
         if (ImGui.Button("读取驯兽师任务链"))
         {
             debugResult = debugDataService.FindBeastmasterQuestChain();
+        }
+
+        if (ImGui.Button("读取图鉴副本 ID"))
+        {
+            debugResult = debugDataService.FindCatalogDuties();
         }
 
         if (ImGui.Button("读取当前角色"))

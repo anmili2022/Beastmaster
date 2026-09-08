@@ -167,6 +167,43 @@ public sealed class BeastmasterDebugDataService
             DalamudApi.DataManager.GetExcelSheet<ContentFinderCondition>()
                 .Select(row => (row.RowId, Name: row.Name.ExtractText())));
 
+    public string FindCatalogDuties()
+    {
+        var duties = DalamudApi.DataManager.GetExcelSheet<ContentFinderCondition>();
+        var builder = new StringBuilder()
+            .AppendLine("类型: 魔兽图鉴副本 ID")
+            .AppendLine("来源: BeastmasterCatalog.Duty");
+
+        foreach (var entry in BeastmasterCatalog.Entries.Where(entry => entry.LocationType == BeastmasterCatalogLocationType.Duty))
+        {
+            var normalizedName = NormalizeDutyName(entry.Location);
+            var matches = duties
+                .Where(duty => duty.RowId != 0
+                    && duty.TerritoryType.RowId != 0
+                    && NormalizeDutyName(duty.Name.ExtractText()).Equals(normalizedName, StringComparison.Ordinal))
+                .OrderBy(duty => duty.RowId)
+                .ToArray();
+
+            builder.AppendLine($"图鉴 {entry.Number}. {entry.Name} | 副本={entry.Location}");
+            if (matches.Length == 0)
+            {
+                builder.AppendLine("  未找到匹配的 ContentFinderCondition。");
+                continue;
+            }
+
+            foreach (var duty in matches)
+            {
+                var territoryName = DalamudApi.DataManager.GetExcelSheet<TerritoryType>()
+                    .TryGetRow(duty.TerritoryType.RowId, out var territory)
+                    ? territory.PlaceName.Value.Name.ExtractText()
+                    : string.Empty;
+                builder.AppendLine($"  ContentFinderCondition.RowId={duty.RowId} | TerritoryType={duty.TerritoryType.RowId} | Map.RowId={duty.TerritoryType.Value.Map.RowId} | 区域={territoryName}");
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
     private static string FormatMatches(
         string category,
         string query,
@@ -212,4 +249,8 @@ public sealed class BeastmasterDebugDataService
 
     private static string JoinLines(params string[] lines)
         => string.Join(Environment.NewLine, lines);
+
+    private static string NormalizeDutyName(string name)
+        => new(name.Where(character => !char.IsWhiteSpace(character)
+            && character is not '·' and not '：' and not ':').ToArray());
 }

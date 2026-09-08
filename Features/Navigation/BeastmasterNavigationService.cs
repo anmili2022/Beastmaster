@@ -22,6 +22,9 @@ public sealed class BeastmasterNavigationService : IDisposable
     private readonly bool isVnavmeshInstalled;
     private readonly bool isLifestreamInstalled;
     private BeastmasterQuestLocation? pendingLocation;
+    private BeastmasterQuestLocation? pendingVnavLocation;
+    private bool pendingVnavFieldNavigation;
+    private DateTime nextVnavCheckUtc = DateTime.MinValue;
     private DateTime pendingStartedUtc;
     private BeastmasterQuestLocation? pendingMountLocation;
     private DateTime pendingMountStartedUtc;
@@ -75,8 +78,10 @@ public sealed class BeastmasterNavigationService : IDisposable
         {
             if (!isReady.InvokeFunc())
             {
-                DalamudApi.ChatGui.Print("[驯兽师助手] vnavmesh 未就绪。");
-                return false;
+                pendingVnavLocation = location;
+                pendingVnavFieldNavigation = false;
+                DalamudApi.ChatGui.Print("[驯兽师助手] vnavmesh 未就绪，准备完成后将自动开始导航。 ");
+                return true;
             }
 
             var target = nearestPoint.InvokeFunc(location.Position, 120f, 300f) ?? location.Position;
@@ -107,23 +112,39 @@ public sealed class BeastmasterNavigationService : IDisposable
             return false;
         }
 
-        var map = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Map>()
+        var maps = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Map>();
+        var map = maps
             .FirstOrDefault(candidate => candidate.TerritoryType.RowId != 0
                 && candidate.SizeFactor > 0
+                && (entry.TerritoryType == 0 || candidate.TerritoryType.RowId == entry.TerritoryType)
+                && (entry.MapRowId == 0 || candidate.RowId == entry.MapRowId)
                 && candidate.PlaceName.Value.Name.ExtractText().Equals(entry.Location, StringComparison.Ordinal));
+
+        // Some client map rows use a different territory/map pairing than the
+        // catalog source. Fall back to the localized map name and retain the
+        // catalog identifiers for navigation and map flags.
         if (map.RowId == 0)
+        {
+            map = maps.FirstOrDefault(candidate => candidate.TerritoryType.RowId != 0
+                && candidate.SizeFactor > 0
+                && candidate.PlaceName.Value.Name.ExtractText().Equals(entry.Location, StringComparison.Ordinal));
+        }
+
+        if (map.RowId == 0 && !(entry.WorldX.HasValue && entry.WorldY.HasValue && entry.WorldZ.HasValue))
         {
             DalamudApi.ChatGui.Print($"[驯兽师助手] 客户端地图表中找不到 {entry.Location}。");
             return false;
         }
 
-        var position = new Vector3(
-            50f * entry.MapX.Value - map.OffsetX - 102400f / map.SizeFactor - 50f,
-            0f,
-            50f * entry.MapY.Value - map.OffsetY - 102400f / map.SizeFactor - 50f);
+        var position = entry.WorldX.HasValue && entry.WorldY.HasValue && entry.WorldZ.HasValue
+            ? new Vector3(entry.WorldX.Value, entry.WorldY.Value, entry.WorldZ.Value)
+            : new Vector3(
+                50f * entry.MapX!.Value - map.OffsetX - 102400f / map.SizeFactor - 50f,
+                0f,
+                50f * entry.MapY!.Value - map.OffsetY - 102400f / map.SizeFactor - 50f);
         var location = new BeastmasterQuestLocation(
-            map.TerritoryType.RowId,
-            map.RowId,
+            entry.TerritoryType != 0 ? entry.TerritoryType : map.TerritoryType.RowId,
+            entry.MapRowId != 0 ? entry.MapRowId : map.RowId,
             position,
             entry.Location,
             entry.Name);
@@ -137,9 +158,47 @@ public sealed class BeastmasterNavigationService : IDisposable
         return StartFieldNavigation(location);
     }
 
+    public unsafe bool OpenDutyFinder(BeastmasterCatalogEntry entry)
+    {
+        if (entry.LocationType != BeastmasterCatalogLocationType.Duty)
+        {
+            return false;
+        }
+
+        var duty = entry.ContentFinderConditionId != 0
+            ? DalamudApi.DataManager.GetExcelSheet<ContentFinderCondition>()
+                .FirstOrDefault(candidate => candidate.RowId == entry.ContentFinderConditionId)
+            : default;
+        if (duty.RowId == 0)
+        {
+            var normalizedDutyName = NormalizeDutyName(entry.Location);
+            duty = DalamudApi.DataManager.GetExcelSheet<ContentFinderCondition>()
+                .FirstOrDefault(candidate => candidate.TerritoryType.RowId != 0
+                    && NormalizeDutyName(candidate.Name.ExtractText()).Equals(normalizedDutyName, StringComparison.Ordinal));
+        }
+        if (duty.RowId == 0)
+        {
+            DalamudApi.ChatGui.Print($"[驯兽师助手] 任务搜索器中找不到“{entry.Location}”。");
+            return false;
+        }
+
+        try
+        {
+            AgentContentsFinder.Instance()->OpenRegularDuty(duty.RowId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            DalamudApi.Log.Warning(ex, "Failed to open Duty Finder for {DutyName}.", entry.Location);
+            DalamudApi.ChatGui.Print($"[驯兽师助手] 打开任务搜索器失败：{ex.Message}");
+            return false;
+        }
+    }
+
     public void Stop()
     {
         pendingLocation = null;
+        pendingVnavLocation = null;
         pendingMountLocation = null;
         try
         {
@@ -162,8 +221,10 @@ public sealed class BeastmasterNavigationService : IDisposable
         {
             if (!isReady.InvokeFunc())
             {
-                DalamudApi.ChatGui.Print("[驯兽师助手] vnavmesh 未就绪。");
-                return false;
+                pendingVnavLocation = location;
+                pendingVnavFieldNavigation = true;
+                DalamudApi.ChatGui.Print("[驯兽师助手] vnavmesh 未就绪，准备完成后将自动开始导航。 ");
+                return true;
             }
 
             var player = DalamudApi.ObjectTable.LocalPlayer;
@@ -242,6 +303,7 @@ public sealed class BeastmasterNavigationService : IDisposable
     private void OnFrameworkUpdate(IFramework framework)
     {
         _ = framework;
+        ProcessPendingVnav();
         ProcessPendingMount();
         if (pendingLocation == null)
         {
@@ -274,6 +336,48 @@ public sealed class BeastmasterNavigationService : IDisposable
         var location = pendingLocation;
         pendingLocation = null;
         StartFieldNavigation(location);
+    }
+
+    private void ProcessPendingVnav()
+    {
+        if (pendingVnavLocation == null || DalamudApi.ObjectTable.LocalPlayer == null)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        if (now < nextVnavCheckUtc)
+        {
+            return;
+        }
+
+        nextVnavCheckUtc = now.AddMilliseconds(500);
+
+        try
+        {
+            if (!isReady.InvokeFunc())
+            {
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            DalamudApi.Log.Warning(ex, "Failed to check vnavmesh readiness.");
+            return;
+        }
+
+        var location = pendingVnavLocation;
+        var fieldNavigation = pendingVnavFieldNavigation;
+        pendingVnavLocation = null;
+        pendingVnavFieldNavigation = false;
+        if (fieldNavigation)
+        {
+            StartFieldNavigation(location);
+        }
+        else
+        {
+            StartPathfind(location, false);
+        }
     }
 
     private unsafe void ProcessPendingMount()
@@ -318,6 +422,13 @@ public sealed class BeastmasterNavigationService : IDisposable
     {
         try
         {
+            if (!isReady.InvokeFunc())
+            {
+                pendingVnavLocation = location;
+                pendingVnavFieldNavigation = true;
+                return true;
+            }
+
             var started = pathfindAndMoveTo.InvokeFunc(location.Position, fly);
             if (configuration.ShowNavigationLogs)
             {
@@ -352,6 +463,10 @@ public sealed class BeastmasterNavigationService : IDisposable
     private bool IsPluginLoaded(string internalName)
         => pluginInterface.InstalledPlugins.Any(plugin =>
             plugin.IsLoaded && plugin.InternalName.Equals(internalName, StringComparison.OrdinalIgnoreCase));
+
+    private static string NormalizeDutyName(string name)
+        => new(name.Where(character => !char.IsWhiteSpace(character)
+            && character is not '·' and not '：' and not ':').ToArray());
 
     private unsafe void SetMapFlag(BeastmasterQuestLocation location)
     {
