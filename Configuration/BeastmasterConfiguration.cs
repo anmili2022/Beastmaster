@@ -15,6 +15,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool HideCompletedQuests { get; set; }
     public bool SortCatalogByLocation { get; set; }
     public bool HideCapturedBeasts { get; set; }
+    public bool AutoCompleteCatalogFromChat { get; set; } = true;
     public bool UseFlightNavigation { get; set; } = true;
     public bool SetFlagOnNavigation { get; set; } = true;
     public bool ShowNavigationLogs { get; set; } = true;

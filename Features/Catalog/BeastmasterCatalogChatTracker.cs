@@ -10,10 +10,12 @@ public sealed partial class BeastmasterCatalogChatTracker : IDisposable
             ["羊羔"] = "迷途羊羔",
         };
 
+    private readonly BeastmasterConfiguration configuration;
     private readonly BeastmasterProgressService progressService;
 
-    public BeastmasterCatalogChatTracker(BeastmasterProgressService progressService)
+    public BeastmasterCatalogChatTracker(BeastmasterConfiguration configuration, BeastmasterProgressService progressService)
     {
+        this.configuration = configuration;
         this.progressService = progressService;
         DalamudApi.ChatGui.ChatMessage += OnChatMessage;
     }
@@ -25,6 +27,11 @@ public sealed partial class BeastmasterCatalogChatTracker : IDisposable
 
     private void OnChatMessage(object message)
     {
+        if (!configuration.AutoCompleteCatalogFromChat)
+        {
+            return;
+        }
+
         var text = ExtractChatMessageText(message);
         var match = CaptureMessageRegex().Match(text);
         if (!match.Success)

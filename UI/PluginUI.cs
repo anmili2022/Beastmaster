@@ -53,7 +53,7 @@ public sealed class PluginUI
 
         ImGui.SetNextWindowSize(new Vector2(900f, 600f), ImGuiCond.FirstUseEver);
         ImGui.SetNextWindowSizeConstraints(new Vector2(700f, 460f), new Vector2(float.MaxValue, float.MaxValue));
-        if (!ImGui.Begin("驯兽师助手", ref isMainWindowOpen))
+        if (!ImGui.Begin($"驯兽师助手 v{GetType().Assembly.GetName().Version}", ref isMainWindowOpen))
         {
             ImGui.End();
             return;
@@ -303,6 +303,15 @@ public sealed class PluginUI
     {
         ImGui.Text("魔兽图鉴");
         ImGui.SameLine();
+        if (ImGui.Button("WIKI"))
+        {
+            Process.Start(new ProcessStartInfo("https://ff14.huijiwiki.com/wiki/%E9%AD%94%E5%85%BD%E5%9B%BE%E9%89%B4")
+            {
+                UseShellExecute = true,
+            });
+        }
+
+        ImGui.SameLine();
         var stopButtonWidth = ImGui.CalcTextSize("停止导航").X + ImGui.GetStyle().FramePadding.X * 2f;
         var stopButtonX = ImGui.GetWindowContentRegionMax().X - stopButtonWidth;
         if (ImGui.GetCursorPosX() < stopButtonX)
@@ -313,15 +322,6 @@ public sealed class PluginUI
         if (ImGui.Button("停止导航##catalog-stop-navigation"))
         {
             navigationService.Stop();
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("WIKI"))
-        {
-            Process.Start(new ProcessStartInfo("https://ff14.huijiwiki.com/wiki/%E9%AD%94%E5%85%BD%E5%9B%BE%E9%89%B4")
-            {
-                UseShellExecute = true,
-            });
         }
 
         ImGui.TextDisabled("捕获成功时自动记录，也可按当前角色手动修改完成状态。");
@@ -358,7 +358,7 @@ public sealed class PluginUI
 
         if (!ImGui.BeginTable(
                 "BeastmasterCatalogTable",
-                5,
+                6,
                 ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.ScrollY | ImGuiTableFlags.SizingStretchProp,
                 new Vector2(0f, 0f)))
         {
@@ -367,6 +367,7 @@ public sealed class PluginUI
 
         ImGui.TableSetupColumn("完成", ImGuiTableColumnFlags.WidthFixed, 46f);
         ImGui.TableSetupColumn("编号 / 魔兽", ImGuiTableColumnFlags.WidthFixed, 150f);
+        ImGui.TableSetupColumn("等级", ImGuiTableColumnFlags.WidthFixed, 50f);
         ImGui.TableSetupColumn("区域 / 副本", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableSetupColumn("坐标", ImGuiTableColumnFlags.WidthFixed, 112f);
         ImGui.TableSetupColumn("导航", ImGuiTableColumnFlags.WidthFixed, 62f);
@@ -408,6 +409,8 @@ public sealed class PluginUI
             ImGui.TableNextColumn();
             ImGui.Text($"{entry.Number}. {entry.Name}");
             ImGui.TableNextColumn();
+            ImGui.TextUnformatted(entry.Level);
+            ImGui.TableNextColumn();
             ImGui.TextUnformatted(entry.Location);
             ImGui.TableNextColumn();
             ImGui.TextUnformatted(GetCatalogCoordinate(entry));
@@ -447,6 +450,7 @@ public sealed class PluginUI
         ImGui.Text("常用设置");
         ImGui.TextDisabled($"当前角色：{progressService.CurrentCharacterLabel}");
         DrawSettingCheckbox("隐藏已完成任务", "任务页只显示未完成的驯兽师任务。", nameof(configuration.HideCompletedQuests), configuration.HideCompletedQuests);
+        DrawSettingCheckbox("捕获消息自动记录", "收到成功结识消息时自动标记图鉴完成。", nameof(configuration.AutoCompleteCatalogFromChat), configuration.AutoCompleteCatalogFromChat);
         ImGui.Spacing();
 
         ImGui.Text("导航设置");
@@ -472,6 +476,9 @@ public sealed class PluginUI
             {
                 case nameof(configuration.HideCompletedQuests):
                     configuration.HideCompletedQuests = value;
+                    break;
+                case nameof(configuration.AutoCompleteCatalogFromChat):
+                    configuration.AutoCompleteCatalogFromChat = value;
                     break;
                 case nameof(configuration.UseFlightNavigation):
                     configuration.UseFlightNavigation = value;

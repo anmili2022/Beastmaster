@@ -26,7 +26,7 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         var questService = new BeastmasterQuestService();
         var debugDataService = new BeastmasterDebugDataService();
         navigationService = new BeastmasterNavigationService(pluginInterface, Configuration);
-        catalogChatTracker = new BeastmasterCatalogChatTracker(progressService);
+        catalogChatTracker = new BeastmasterCatalogChatTracker(Configuration, progressService);
         ui = new PluginUI(Configuration, progressService, questService, navigationService, debugDataService);
 
         DalamudApi.Commands.AddHandler(CommandName, new CommandInfo(OnCommand)
