@@ -43,6 +43,15 @@
 - **WIKI** 链接按钮，跳转 `ff14.huijiwiki.com/wiki/魔兽图鉴`
 - **等级** 列，数据来源于wiki
 
+**推荐装备**
+
+- 新增推荐装备栏目
+- 记录驯兽师 50 级开荒装：武器、盾牌、防具、饰品和职业证
+- 记录第二套 50 级 BIS，可在推荐装备页切换方案
+- 装备名称可点击访问对应的灰机 Wiki 物品详情页
+- 推荐装备显示背包和对应兵装库中的持有状态及数量
+- 推荐装备持有状态改为固定 ItemId 检测，避免装备同名或名称变化导致误判
+
 **快捷指令**
 
 - "魔兽图鉴"按钮：通过 UIModule 执行 `/魔兽图鉴`（不使用 ICommandManager）
@@ -64,9 +73,12 @@
 - 悬浮窗显示「自动捕获中...」或「自动攻击中...」以及下一个技能
 - 悬浮窗「尝试捕获」关闭后只执行 1→2→3 连击
 - 左侧独立「自动输出」栏目管理自动输出总开关
-- 自动输出悬浮窗标题为「自动输出」
+- 自动输出悬浮窗标题为「驯兽ACR」
+- 当前职业不是驯兽师时自动隐藏悬浮窗，切回驯兽师后自动恢复
+- 任务开始 NPC 导航复用飞行导航逻辑，支持自动上坐骑和步行回退
 - 悬浮窗显示当前魔兽、属性、技力、兽力、御兽之心、兽灵之心和决策原因
-- 悬浮窗可直接切换高级技能总开关、自动大招和自动协作技
+- 悬浮窗可直接切换高级技能总开关、御兽协作（黄豆）和兽灵协作（蓝豆）
+- 悬浮窗可直接切换“释放”开关
 - 悬浮窗可直接调整捕获血量阈值，默认 80%
 - 自动输出栏目提供「详细模式」开关，默认关闭
 - 捕获状态按 Status.SourceId 区分自身施加和他人施加的状态
@@ -82,11 +94,12 @@
 - 御兽之心/兽灵之心：`CurrentGauge +0x18` 位字段
 - 每 100 毫秒采样一次，UI 使用缓存，避免每帧访问游戏内存
 - 自动输出增加统一 Action 可用性结果和失败原因
-- 高级技能支持手动大招和开启开关后的自动大招请求；协作技目前仅进行候选和资源判断
+- 高级技能支持手动大招；御兽协作（黄豆）和兽灵协作（蓝豆）互斥，协作流程自动包含大招
+- 高级技能开启后，当前魔兽释放技能通过运行时调整 ID 和 Action 状态判断，冷却中回退基础技能
 
 **配置**
 
-- Version 8 结构：HideCapturedBeasts、SortCatalogByLevel、AutoCompleteCatalogFromChat、AutoCaptureEnabled、AutoCaptureTryCapture、CaptureHpThreshold、ShowGaugeInOverlay（详细模式）、AdvancedActionsEnabled、AutoUltimateEnabled、AutoCooperationEnabled
+- Version 8 结构：HideCapturedBeasts、SortCatalogByLevel、AutoCompleteCatalogFromChat、AutoCaptureEnabled、AutoCaptureTryCapture、CaptureHpThreshold、ShowGaugeInOverlay（详细模式）、AdvancedActionsEnabled、BeastHeartCooperationEnabled、BeastSoulCooperationEnabled
 - 捕获血量阈值 `CaptureHpThreshold` 持久化保存，范围 1%~100%
 - 按角色（ContentId）独立保存图鉴进度
 - 角色键优先使用 ContentId 十进制字符串，回退使用 Name@World
@@ -130,6 +143,8 @@
 - 「读取驯兽师量谱原始数据」只读输出 JobGauges 地址附近 64 字节，不写入内存
 - 「读取魔兽属性映射」输出 50 个图鉴魔兽的 DataId、属性、IconId、大招和释放技能
 - DEBUG 提供「读取当前目标状态」和「读取当前连击状态」诊断按钮
+- DEBUG 提供「读取协力验证数据」按钮，一次输出量谱、目标、关键 Action 状态码和自身属性状态
+- DEBUG 提供「读取推荐装备物品 ID」按钮，输出两套装备的精确匹配和候选 ItemId
 - 图鉴、量谱和自动输出复用 `BeastmasterSkillProfile` 统一技能资料
 - 所有 DEBUG 读取按钮自动复制结果到剪贴板
 
@@ -193,7 +208,7 @@ Beastmaster/
 - 20 条 Dalamud SDK 程序集解析警告（与 Phantom 项目相同），不影响运行
 - 任务目标导航仅 71026 Sequence 1 已核对坐标；其他任务目标坐标待采集
 - 高级技能大招已接入资源、目标、ActionManager 判断和自动请求；协作技仍等待运行时窗口数据
-- 协作技 7 秒运行时窗口尚未接入，需上线后采集并确认对应状态字段
+- 协作技已接入两段请求和 4 秒待续段逻辑，第二段按当前魔兽属性选择且不再被属性状态硬阻塞；7 秒运行时协作窗口仍需上线后采集并确认对应状态字段
 - 技力、兽力字段已按当前截图确认上限为 250；游戏版本更新后仍需重新核对
 
 ## 后续建议（优先级从高到低）

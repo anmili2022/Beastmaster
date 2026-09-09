@@ -11,6 +11,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 {
     private const uint BeastmasterClassJobId = 43;
     private const uint BeastmasterUltimateActionId = 47093;
+    private const uint BeastmasterReleaseBaseActionId = 44890;
     private readonly BeastmasterConfiguration configuration;
     private readonly uint smashActionId;
     private readonly uint biteActionId;
@@ -21,6 +22,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private DateTime nextActionUtc = DateTime.MinValue;
     private DateTime capturePendingUntilUtc = DateTime.MinValue;
     private ulong captureTargetId;
+    private uint pendingCooperationActionId;
+    private uint pendingCooperationStatusId;
+    private DateTime pendingCooperationUntilUtc = DateTime.MinValue;
+    private DateTime nextReleaseAttemptUtc = DateTime.MinValue;
     private bool reportedMissingData;
 
     public string StatusText { get; private set; } = "等待当前目标";
@@ -134,11 +139,30 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         nextActionUtc = DateTime.UtcNow.AddMilliseconds(700);
+        if ((configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
+            && TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var firstCooperationActionId, out var followUpActionId, out var requiredStatusId)
+            && firstCooperationActionId == BeastmasterUltimateActionId)
+        {
+            pendingCooperationActionId = followUpActionId;
+            pendingCooperationStatusId = requiredStatusId;
+            pendingCooperationUntilUtc = DateTime.UtcNow.AddSeconds(4);
+        }
+
         ManualActionStatus = $"已请求释放：{GetActionName(actionId)}";
         return true;
     }
 
     private static unsafe bool TryUseActionWithStatusFallback(
+        ActionManager* actionManager,
+        uint actionId,
+        ulong targetId,
+        uint actionStatus)
+    {
+        _ = actionStatus;
+        return actionManager->UseAction(ActionType.Action, actionId, targetId);
+    }
+
+    private static unsafe bool TryUseAdvancedAction(
         ActionManager* actionManager,
         uint actionId,
         ulong targetId,
@@ -215,6 +239,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             : gauge.Status;
         AdvancedActionStatus = GetAdvancedActionStatus(gauge);
 
+        if (pendingCooperationActionId != 0 && pendingCooperationUntilUtc <= now)
+        {
+            pendingCooperationActionId = 0;
+            pendingCooperationStatusId = 0;
+            pendingCooperationUntilUtc = DateTime.MinValue;
+        }
+
         if (smashActionId == 0 || biteActionId == 0 || shieldActionId == 0 || captureActionId == 0 || captureStatusId == 0)
         {
             if (!reportedMissingData)
@@ -242,6 +273,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             TargetStatus = "无有效目标";
             TargetHpPercent = 0f;
             ResetCaptureState();
+            ResetCooperationState();
             return;
         }
 
@@ -250,6 +282,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             captureTargetId = target.EntityId;
             capturePendingUntilUtc = DateTime.MinValue;
             CaptureState = "未开始";
+            ResetCooperationState();
         }
 
         var actionManager = ActionManager.Instance();
@@ -298,16 +331,64 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        var advancedUltimateReady = configuration.AdvancedActionsEnabled
-            && configuration.AutoUltimateEnabled
-            && gauge.Available
+        uint actionId;
+
+        if (configuration.AdvancedActionsEnabled
+            && (configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
+            && pendingCooperationActionId != 0)
+        {
+            actionId = pendingCooperationActionId;
+            StatusText = "自动协作技中...";
+            NextActionName = GetActionName(actionId);
+            NextActionReason = "协作技第二段，已按属性选择技能";
+
+            var cooperationStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
+            var cooperationUsed = TryUseAdvancedAction(actionManager, actionId, target.GameObjectId, cooperationStatus);
+            if (cooperationUsed)
+            {
+                nextActionUtc = now.AddMilliseconds(700);
+                ResetCooperationState();
+            }
+
+            return;
+        }
+
+        if (configuration.AdvancedActionsEnabled
+            && configuration.AutoReleaseEnabled
             && gauge.SummonEntry != null
-            && gauge.Tp >= BeastmasterGaugeSnapshot.ComboGaugeRequirement
-            && gauge.BeastPower >= BeastmasterGaugeSnapshot.ComboGaugeRequirement;
-        var actionId = configuration.AutoCaptureTryCapture && !hasOwnCapture && canCapture
+            && TryUseReleaseAction(actionManager, target.GameObjectId, now))
+        {
+            return;
+        }
+
+        if (configuration.AdvancedActionsEnabled
+            && (configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
+            && TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var cooperationActionId, out var cooperationFollowUpId, out var cooperationStatusId))
+        {
+            actionId = cooperationActionId;
+            StatusText = "自动协作技中...";
+            NextActionName = GetActionName(actionId);
+            NextActionReason = $"协作技第一段，下一段：{GetActionName(cooperationFollowUpId)}";
+
+            var cooperationStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
+            var cooperationUsed = TryUseAdvancedAction(actionManager, actionId, target.GameObjectId, cooperationStatus);
+            if (!cooperationUsed)
+            {
+                NextActionReason = $"协作技请求失败（状态码 {cooperationStatus}）";
+            }
+            if (cooperationUsed)
+            {
+                nextActionUtc = now.AddMilliseconds(700);
+                pendingCooperationActionId = cooperationFollowUpId;
+                pendingCooperationStatusId = cooperationStatusId;
+                pendingCooperationUntilUtc = now.AddSeconds(4);
+            }
+
+            return;
+        }
+
+        actionId = configuration.AutoCaptureTryCapture && !hasOwnCapture && canCapture
             ? captureActionId
-            : advancedUltimateReady
-                ? BeastmasterUltimateActionId
             : actionManager->Combo.Timer > 0f && actionManager->Combo.Action == biteActionId && player.Level >= 12
                 ? shieldActionId
                 : actionManager->Combo.Timer > 0f && actionManager->Combo.Action == smashActionId && player.Level >= 2
@@ -362,6 +443,120 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         CaptureState = "未开始";
     }
 
+    private unsafe bool TryUseReleaseAction(ActionManager* actionManager, ulong targetId, DateTime now)
+    {
+        if (now < nextReleaseAttemptUtc)
+        {
+            return false;
+        }
+
+        var releaseActionId = actionManager->GetAdjustedActionId(BeastmasterReleaseBaseActionId);
+        if (releaseActionId == 0)
+        {
+            return false;
+        }
+
+        var releaseName = GetActionName(releaseActionId);
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, releaseActionId, targetId);
+        if (actionStatus != 0)
+        {
+            nextReleaseAttemptUtc = now.AddMilliseconds(500);
+            return false;
+        }
+
+        StatusText = "自动释放魔兽技能...";
+        NextActionName = releaseName;
+        NextActionReason = "释放技能冷却完成";
+        if (!actionManager->UseAction(ActionType.Action, releaseActionId, targetId))
+        {
+            NextActionReason = "释放技能请求失败";
+            nextReleaseAttemptUtc = now.AddSeconds(1);
+            return false;
+        }
+
+        nextReleaseAttemptUtc = now.AddMilliseconds(500);
+        nextActionUtc = now.AddMilliseconds(700);
+        return true;
+    }
+
+    private void ResetCooperationState()
+    {
+        pendingCooperationActionId = 0;
+        pendingCooperationStatusId = 0;
+        pendingCooperationUntilUtc = DateTime.MinValue;
+    }
+
+    private bool HasOwnStatus(uint statusId)
+    {
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        return player != null && player.StatusList.Any(status => status.StatusId == statusId && status.SourceId == player.EntityId);
+    }
+
+    private static bool TryGetCooperationAction(
+        BeastmasterGaugeSnapshot gauge,
+        bool ultimateFirst,
+        out uint firstActionId,
+        out uint secondActionId,
+        out uint requiredStatusId)
+    {
+        firstActionId = 0;
+        secondActionId = 0;
+        requiredStatusId = 0;
+        var entry = gauge.SummonEntry;
+        if (entry == null
+            || gauge.Tp < BeastmasterGaugeSnapshot.ComboGaugeRequirement
+            || gauge.BeastPower < BeastmasterGaugeSnapshot.ComboGaugeRequirement)
+        {
+            return false;
+        }
+
+        var nextAttribute = entry.Attribute switch
+        {
+            BeastmasterAttribute.魔 => BeastmasterAttribute.翔,
+            BeastmasterAttribute.翔 => BeastmasterAttribute.猛,
+            BeastmasterAttribute.猛 => BeastmasterAttribute.坚,
+            BeastmasterAttribute.坚 => BeastmasterAttribute.魔,
+            _ => BeastmasterAttribute.Unknown,
+        };
+        var nextAxeActionId = nextAttribute switch
+        {
+            BeastmasterAttribute.猛 => 44884u,
+            BeastmasterAttribute.坚 => 44887u,
+            BeastmasterAttribute.魔 => 44888u,
+            BeastmasterAttribute.翔 => 44889u,
+            _ => 0u,
+        };
+        var attributeStatusId = entry.Attribute switch
+        {
+            BeastmasterAttribute.猛 => 4596u,
+            BeastmasterAttribute.坚 => 4597u,
+            BeastmasterAttribute.魔 => 4598u,
+            BeastmasterAttribute.翔 => 4595u,
+            _ => 0u,
+        };
+        var nextAttributeStatusId = nextAttribute switch
+        {
+            BeastmasterAttribute.猛 => 4596u,
+            BeastmasterAttribute.坚 => 4597u,
+            BeastmasterAttribute.魔 => 4598u,
+            BeastmasterAttribute.翔 => 4595u,
+            _ => 0u,
+        };
+
+        if (ultimateFirst)
+        {
+            firstActionId = BeastmasterUltimateActionId;
+            secondActionId = nextAxeActionId;
+            requiredStatusId = attributeStatusId;
+            return firstActionId != 0 && secondActionId != 0;
+        }
+
+        firstActionId = nextAxeActionId;
+        secondActionId = BeastmasterUltimateActionId;
+        requiredStatusId = nextAttributeStatusId;
+        return firstActionId != 0 && secondActionId != 0;
+    }
+
     private static unsafe BeastmasterActionAvailability CheckActionAvailability(
         ActionManager* actionManager,
         uint actionId,
@@ -392,20 +587,9 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return "等待召唤兽，暂不评估高级技能";
         }
 
-        if (configuration.AutoUltimateEnabled)
+        if (configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
         {
-            if (gauge.Tp < BeastmasterGaugeSnapshot.ComboGaugeRequirement
-                || gauge.BeastPower < BeastmasterGaugeSnapshot.ComboGaugeRequirement)
-            {
-                return $"大招 {entry.Name}：资源不足（技力 {gauge.Tp}/{BeastmasterGaugeSnapshot.MaximumGauge}，兽力 {gauge.BeastPower}/{BeastmasterGaugeSnapshot.MaximumGauge}）";
-            }
-
-            return $"大招 {entry.Name}：资源满足，等待动作系统确认";
-        }
-
-        if (configuration.AutoCooperationEnabled)
-        {
-            return "协作技已开启，等待运行时协作窗口数据";
+            return $"{(configuration.BeastHeartCooperationEnabled ? "御兽协作（黄豆）" : "兽灵协作（蓝豆）")}已开启";
         }
 
         return "高级技能已开启，但大招和协作技均关闭";

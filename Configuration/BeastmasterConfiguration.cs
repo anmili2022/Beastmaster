@@ -25,8 +25,9 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public float CaptureHpThreshold { get; set; } = 80f;
     public bool ShowGaugeInOverlay { get; set; }
     public bool AdvancedActionsEnabled { get; set; }
-    public bool AutoUltimateEnabled { get; set; }
-    public bool AutoCooperationEnabled { get; set; }
+    public bool BeastHeartCooperationEnabled { get; set; }
+    public bool BeastSoulCooperationEnabled { get; set; }
+    public bool AutoReleaseEnabled { get; set; } = true;
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
         = new(StringComparer.Ordinal);
 

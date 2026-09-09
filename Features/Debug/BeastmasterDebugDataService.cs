@@ -313,6 +313,62 @@ public sealed class BeastmasterDebugDataService
         return builder.ToString().TrimEnd();
     }
 
+    public string FindRecommendedEquipmentIds()
+    {
+        var items = DalamudApi.DataManager.GetExcelSheet<Item>();
+        var builder = new StringBuilder()
+            .AppendLine("类型: 推荐装备物品 ID")
+            .AppendLine("说明: 装备页面使用固定 ItemId 检测持有状态")
+            .AppendLine();
+
+        foreach (var plan in new[]
+        {
+            (Name: "开荒装", Entries: BeastmasterEquipmentGuide.Level50Starter),
+            (Name: "BIS", Entries: BeastmasterEquipmentGuide.Level50BestInSlot),
+        })
+        {
+            builder.AppendLine($"[{plan.Name}]");
+            foreach (var equipment in plan.Entries.Where(entry => entry.Name != "无装备"))
+            {
+                var exactMatches = items
+                    .Where(item => item.RowId != 0 && item.Name.ExtractText().Equals(equipment.Name, StringComparison.Ordinal))
+                    .OrderBy(item => item.RowId)
+                    .ToArray();
+                builder.AppendLine($"{equipment.Slot} | {equipment.Name}");
+                if (exactMatches.Length > 0)
+                {
+                    foreach (var item in exactMatches)
+                    {
+                        builder.AppendLine($"  精确匹配: ItemId={item.RowId} | {item.Name.ExtractText()}");
+                    }
+                }
+                else
+                {
+                    var candidates = items
+                        .Where(item => item.RowId != 0 && item.Name.ExtractText().Contains(equipment.Name, StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(item => item.RowId)
+                        .Take(10)
+                        .ToArray();
+                    if (candidates.Length == 0)
+                    {
+                        builder.AppendLine("  未找到精确匹配或候选项");
+                    }
+                    else
+                    {
+                        foreach (var item in candidates)
+                        {
+                            builder.AppendLine($"  候选: ItemId={item.RowId} | {item.Name.ExtractText()}");
+                        }
+                    }
+                }
+            }
+
+            builder.AppendLine();
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
     public string GetCurrentTargetDebug()
     {
         var target = DalamudApi.TargetManager.Target;
@@ -362,6 +418,75 @@ public sealed class BeastmasterDebugDataService
             .TrimEnd();
     }
 
+    public unsafe string GetCooperationValidationDebug()
+    {
+        var gauge = BeastmasterGaugeSnapshot.ReadRaw();
+        var target = DalamudApi.TargetManager.Target as IBattleChara;
+        var manager = ActionManager.Instance();
+        var builder = new StringBuilder()
+            .AppendLine("类型: 驯兽师协力验证数据")
+            .AppendLine("模式: 只读，不释放技能")
+            .AppendLine($"量谱: {(gauge.Available ? "可用" : gauge.Status)}")
+            .AppendLine($"技力: {gauge.Tp}/250")
+            .AppendLine($"兽力: {gauge.BeastPower}/250")
+            .AppendLine($"御兽之心: {gauge.BeastHeartStacks} 层")
+            .AppendLine($"兽灵之心: {gauge.BeastSoulStacks} 层")
+            .AppendLine($"当前兽笛: {(gauge.WhistleIndex is >= 1 and <= 3 ? $"{gauge.WhistleIndex} 号" : "未召唤")}");
+
+        var entry = gauge.SummonEntry;
+        if (entry == null)
+        {
+            builder.AppendLine("当前魔兽: 未识别");
+        }
+        else
+        {
+            builder.AppendLine($"当前魔兽: {entry.Name}");
+            builder.AppendLine($"属性: {entry.Attribute}");
+            builder.AppendLine($"宠物大招资料: {entry.UltimateActionId} | {GetActionNameById(entry.UltimateActionId)}");
+            builder.AppendLine($"释放资料: {entry.ReleaseActionId} | {GetActionNameById(entry.ReleaseActionId)}");
+        }
+
+        if (target == null)
+        {
+            builder.AppendLine("目标: 无有效 BattleNpc");
+        }
+        else
+        {
+            builder.AppendLine($"目标: {target.Name.TextValue} | EntityId={target.EntityId} | BaseId={target.BaseId}");
+            builder.AppendLine($"目标 HP: {target.CurrentHp}/{target.MaxHp} | 可选中={target.IsTargetable} | 死亡={target.IsDead}");
+        }
+
+        if (manager == null || target == null)
+        {
+            builder.AppendLine("Action 状态: ActionManager 或目标不可用");
+        }
+        else
+        {
+            builder.AppendLine("Action 状态:");
+            foreach (var actionId in new uint[] { 47093, 44884, 44887, 44888, 44889 })
+            {
+                var status = manager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
+                builder.AppendLine($"  ActionId={actionId} | {GetActionNameById(actionId)} | 状态码={status}");
+            }
+        }
+
+        builder.AppendLine("自身属性状态:");
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            builder.AppendLine("  本地角色不可用");
+        }
+        else
+        {
+            foreach (var status in player.StatusList.Where(status => status.StatusId is >= 4595 and <= 4598))
+            {
+                builder.AppendLine($"  StatusId={status.StatusId} | SourceId={status.SourceId} | 剩余={status.RemainingTime:0.0}s");
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
     private static bool TryGetSummonSkills(uint dataId, out uint ultimateId, out uint releaseId)
     {
         var index = (int)dataId - 18915;
@@ -379,6 +504,11 @@ public sealed class BeastmasterDebugDataService
 
     private static string GetActionName(Lumina.Excel.Sheets.Action action)
         => action.RowId == 0 ? "未找到" : action.Name.ExtractText();
+
+    private static string GetActionNameById(uint actionId)
+        => DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>().TryGetRow(actionId, out var action)
+            ? GetActionName(action)
+            : "未找到";
 
     public unsafe string GetBeastmasterGaugeRaw()
     {

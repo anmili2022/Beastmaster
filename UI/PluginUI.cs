@@ -1,4 +1,5 @@
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Inventory;
 using Lumina.Excel.Sheets;
 using System.Diagnostics;
 using System.Numerics;
@@ -11,6 +12,7 @@ public sealed class PluginUI
     [
         ("quests", "驯兽师任务链"),
         ("catalog", "魔兽图鉴"),
+        ("equipment", "推荐装备"),
         ("commands", "快捷指令"),
         ("auto-output", "自动输出"),
         ("settings", "设置"),
@@ -29,6 +31,9 @@ public sealed class PluginUI
     private DateTime nextGaugeRefreshUtc = DateTime.MinValue;
     private BeastmasterGaugeSnapshot gaugeSnapshot = BeastmasterGaugeSnapshot.Unavailable("等待读取");
     private bool autoOutputCollapsed;
+    private int selectedEquipmentSet;
+    private DateTime nextEquipmentRefreshUtc = DateTime.MinValue;
+    private readonly Dictionary<string, (uint ItemId, uint EquippedCount, uint InventoryCount, uint ArmoryCount)> equipmentOwnership = new(StringComparer.Ordinal);
     private bool isMainWindowOpen;
 
     public PluginUI(
@@ -75,7 +80,11 @@ public sealed class PluginUI
 
     private void DrawAutoCaptureOverlay()
     {
-        if (!autoCaptureService.IsEnabled)
+        const uint beastmasterClassJobId = 43;
+        if (!autoCaptureService.IsEnabled
+            || !DalamudApi.ClientState.IsLoggedIn
+            || DalamudApi.ObjectTable.LocalPlayer == null
+            || DalamudApi.PlayerState.ClassJob.RowId != beastmasterClassJobId)
         {
             return;
         }
@@ -303,23 +312,21 @@ public sealed class PluginUI
 
         ImGui.TextColored(GetAttributeColor(entry.Attribute), $"属性：{entry.Attribute}");
         DrawAdvancedCandidate(
-            "大招",
-            GetActionName(47093),
-            configuration.AutoUltimateEnabled,
+            configuration.BeastHeartCooperationEnabled ? "御兽协作（黄豆）" : "兽灵协作（蓝豆）",
+            configuration.BeastHeartCooperationEnabled
+                ? $"{GetActionName(47093)} → 属性斧"
+                : $"属性斧 → {GetActionName(47093)}",
+            configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled,
             gaugeSnapshot.Tp >= 100 && gaugeSnapshot.BeastPower >= 100
                 ? "技力和兽力满足基础门槛"
                 : $"资源不足：技力 {gaugeSnapshot.Tp}/100，兽力 {gaugeSnapshot.BeastPower}/100");
+        ImGui.TextDisabled($"释放：运行时调整技能（{(configuration.AutoReleaseEnabled ? "开启" : "关闭")}）");
         if (ImGui.Button($"手动释放大招##manual-ultimate-overlay"))
         {
             autoCaptureService.TryUseUltimate();
         }
         ImGui.SameLine();
         ImGui.TextDisabled(autoCaptureService.ManualActionStatus);
-        DrawAdvancedCandidate(
-            "协作候选",
-            GetActionName(entry.ReleaseActionId),
-            configuration.AutoCooperationEnabled,
-            "协作技窗口需要运行时数据，暂不自动释放");
     }
 
     private static void DrawAdvancedCandidate(string type, string actionName, bool enabled, string reason)
@@ -340,10 +347,11 @@ public sealed class PluginUI
         DrawSidebarButton(MainSections[1]);
         DrawSidebarButton(MainSections[2]);
         DrawSidebarButton(MainSections[3]);
+        DrawSidebarButton(MainSections[4]);
 
         ImGui.Separator();
         DrawSidebarLabel("工具");
-        DrawSidebarButton(MainSections[4]);
+        DrawSidebarButton(MainSections[5]);
 
         if (ImGui.Button("反馈与建议", new Vector2(ImGui.GetContentRegionAvail().X, 30f)))
         {
@@ -354,7 +362,7 @@ public sealed class PluginUI
             });
         }
 
-        DrawSidebarButton(MainSections[5]);
+        DrawSidebarButton(MainSections[6]);
     }
 
     private void DrawSidebarButton((string Key, string Label) section)
@@ -392,6 +400,9 @@ public sealed class PluginUI
                 break;
             case "catalog":
                 DrawCatalog();
+                break;
+            case "equipment":
+                DrawEquipment();
                 break;
             case "commands":
                 DrawCommands();
@@ -573,6 +584,184 @@ public sealed class PluginUI
         DrawGameCommandButton("驯兽师魔兽-小", "/beastpetsize all small");
         DrawGameCommandButton("驯兽师魔兽-中", "/beastpetsize all medium");
         DrawGameCommandButton("驯兽师魔兽-大", "/beastpetsize all large");
+    }
+
+    private void DrawEquipment()
+    {
+        RefreshEquipmentOwnership();
+        ImGui.Text("推荐装备");
+        ImGui.TextDisabled("驯兽师 50 级开荒装和 BIS 配置。");
+        var equipmentSet = selectedEquipmentSet;
+        ImGui.SetNextItemWidth(220f);
+        if (ImGui.Combo("装备方案", ref equipmentSet, "开荒装\0BIS\0"))
+        {
+            selectedEquipmentSet = equipmentSet;
+        }
+        ImGui.Separator();
+
+        if (!ImGui.BeginTable(
+                "BeastmasterEquipmentTable",
+                4,
+                ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.SizingStretchProp))
+        {
+            return;
+        }
+
+        ImGui.TableSetupColumn("部位", ImGuiTableColumnFlags.WidthFixed, 90f);
+        ImGui.TableSetupColumn("装备", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("分类", ImGuiTableColumnFlags.WidthFixed, 70f);
+        ImGui.TableSetupColumn("持有", ImGuiTableColumnFlags.WidthFixed, 210f);
+        ImGui.TableHeadersRow();
+
+        var entries = selectedEquipmentSet == 0
+            ? BeastmasterEquipmentGuide.Level50Starter
+            : BeastmasterEquipmentGuide.Level50BestInSlot;
+        foreach (var equipment in entries)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.Text(equipment.Slot);
+            ImGui.TableNextColumn();
+            if (equipment.Name == "无装备")
+            {
+                ImGui.TextDisabled(equipment.Name);
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.45f, 0.75f, 1f, 1f));
+                ImGui.Text(equipment.Name);
+                ImGui.PopStyleColor();
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("点击访问 Wiki 装备详情");
+                }
+
+                if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+                {
+                    OpenEquipmentWiki(equipment.Name);
+                }
+            }
+            ImGui.TableNextColumn();
+            ImGui.TextDisabled(equipment.Category);
+            ImGui.TableNextColumn();
+            DrawEquipmentOwnership(equipment);
+        }
+
+        ImGui.EndTable();
+        ImGui.Spacing();
+        ImGui.TextDisabled(selectedEquipmentSet == 0
+            ? "开荒装：优先考虑获取难度和快速成型。"
+            : "BIS：优先考虑 50 级最终战斗属性。 ");
+    }
+
+    private static void OpenEquipmentWiki(string equipmentName)
+    {
+        Process.Start(new ProcessStartInfo(
+            $"https://ff14.huijiwiki.com/wiki/{Uri.EscapeDataString($"物品:{equipmentName}")}")
+        {
+            UseShellExecute = true,
+        });
+    }
+
+    private void DrawEquipmentOwnership(BeastmasterEquipmentEntry equipment)
+    {
+        if (equipment.Name == "无装备")
+        {
+            ImGui.TextDisabled("-");
+            return;
+        }
+
+        if (!equipmentOwnership.TryGetValue(equipment.Name, out var ownership) || ownership.ItemId == 0)
+        {
+            ImGui.TextDisabled("待补 ItemId");
+            return;
+        }
+
+        var equippedCount = ownership.EquippedCount;
+        var inventoryCount = ownership.InventoryCount;
+        var armoryCount = ownership.ArmoryCount;
+        if (equippedCount > 0)
+        {
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.5f, 1f), $"已装备 ({equippedCount})");
+            ImGui.SameLine();
+        }
+        ImGui.TextColored(
+            inventoryCount > 0 ? new Vector4(0.4f, 0.9f, 0.5f, 1f) : new Vector4(0.65f, 0.65f, 0.7f, 1f),
+            inventoryCount > 0 ? $"背包 有 ({inventoryCount})" : "背包 无");
+        ImGui.SameLine();
+        ImGui.TextColored(
+            armoryCount > 0 ? new Vector4(0.4f, 0.8f, 1f, 1f) : new Vector4(0.65f, 0.65f, 0.7f, 1f),
+            armoryCount > 0 ? $"兵装库 有 ({armoryCount})" : "兵装库 无");
+    }
+
+    private void RefreshEquipmentOwnership()
+    {
+        if (DateTime.UtcNow < nextEquipmentRefreshUtc)
+        {
+            return;
+        }
+
+        equipmentOwnership.Clear();
+        var selectedEntries = selectedEquipmentSet == 0
+            ? BeastmasterEquipmentGuide.Level50Starter
+            : BeastmasterEquipmentGuide.Level50BestInSlot;
+        foreach (var equipment in selectedEntries.Where(item => item.Name != "无装备"))
+        {
+            if (equipment.ItemId == 0)
+            {
+                equipmentOwnership[equipment.Name] = (0, 0, 0, 0);
+                continue;
+            }
+
+            equipmentOwnership[equipment.Name] = (
+                equipment.ItemId,
+                CountItems(equipment.ItemId, [GameInventoryType.EquippedItems]),
+                CountItems(equipment.ItemId, InventoryTypes()),
+                CountItems(equipment.ItemId, ArmoryTypes(equipment.Slot)));
+        }
+
+        nextEquipmentRefreshUtc = DateTime.UtcNow.AddSeconds(1);
+    }
+
+    private static uint CountItems(uint itemId, IEnumerable<GameInventoryType> types)
+    {
+        var count = 0u;
+        foreach (var type in types)
+        {
+            foreach (var inventoryItem in DalamudApi.GameInventory.GetInventoryItems(type))
+            {
+                if (!inventoryItem.IsEmpty && inventoryItem.BaseItemId == itemId)
+                {
+                    count += (uint)inventoryItem.Quantity;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private static IEnumerable<GameInventoryType> InventoryTypes()
+    {
+        yield return GameInventoryType.Inventory1;
+        yield return GameInventoryType.Inventory2;
+        yield return GameInventoryType.Inventory3;
+        yield return GameInventoryType.Inventory4;
+    }
+
+    private static IEnumerable<GameInventoryType> ArmoryTypes(string slot)
+    {
+        if (slot == "主手") yield return GameInventoryType.ArmoryMainHand;
+        else if (slot == "副手") yield return GameInventoryType.ArmoryOffHand;
+        else if (slot == "头部") yield return GameInventoryType.ArmoryHead;
+        else if (slot == "身体") yield return GameInventoryType.ArmoryBody;
+        else if (slot == "手部") yield return GameInventoryType.ArmoryHands;
+        else if (slot == "腿部") yield return GameInventoryType.ArmoryLegs;
+        else if (slot == "脚部") yield return GameInventoryType.ArmoryFeets;
+        else if (slot == "耳饰") yield return GameInventoryType.ArmoryEar;
+        else if (slot == "项链") yield return GameInventoryType.ArmoryNeck;
+        else if (slot == "手镯") yield return GameInventoryType.ArmoryWrist;
+        else if (slot.StartsWith("戒指", StringComparison.Ordinal)) yield return GameInventoryType.ArmoryRings;
+        else if (slot == "职业证") yield return GameInventoryType.ArmorySoulCrystal;
     }
 
     private static void DrawGameCommandButton(string label, string command)
@@ -853,9 +1042,11 @@ public sealed class PluginUI
     private string GetAdvancedActionModeText()
         => !configuration.AdvancedActionsEnabled
             ? "关闭，保留资源"
-            : configuration.AutoUltimateEnabled || configuration.AutoCooperationEnabled
-                ? $"已启用（大招：{(configuration.AutoUltimateEnabled ? "开" : "关")}，协作技：{(configuration.AutoCooperationEnabled ? "开" : "关")}）"
-                : "总开关已开，但具体技能均关闭";
+            : configuration.BeastHeartCooperationEnabled
+                ? "御兽协作（黄豆）"
+                : configuration.BeastSoulCooperationEnabled
+                    ? "兽灵协作（蓝豆）"
+                    : "总开关已开，但未选择协作模式";
 
     private void DrawOverlayAdvancedActionToggles()
     {
@@ -872,17 +1063,32 @@ public sealed class PluginUI
         }
 
         ImGui.Indent();
-        var ultimateEnabled = configuration.AutoUltimateEnabled;
-        if (ImGui.Checkbox("自动大招", ref ultimateEnabled))
+        var beastHeartEnabled = configuration.BeastHeartCooperationEnabled;
+        if (ImGui.Checkbox("御兽协作（黄豆）", ref beastHeartEnabled))
         {
-            configuration.AutoUltimateEnabled = ultimateEnabled;
+            configuration.BeastHeartCooperationEnabled = beastHeartEnabled;
+            if (beastHeartEnabled)
+            {
+                configuration.BeastSoulCooperationEnabled = false;
+            }
             configuration.Save();
         }
 
-        var cooperationEnabled = configuration.AutoCooperationEnabled;
-        if (ImGui.Checkbox("自动协作技", ref cooperationEnabled))
+        var beastSoulEnabled = configuration.BeastSoulCooperationEnabled;
+        if (ImGui.Checkbox("兽灵协作（蓝豆）", ref beastSoulEnabled))
         {
-            configuration.AutoCooperationEnabled = cooperationEnabled;
+            configuration.BeastSoulCooperationEnabled = beastSoulEnabled;
+            if (beastSoulEnabled)
+            {
+                configuration.BeastHeartCooperationEnabled = false;
+            }
+            configuration.Save();
+        }
+
+        var releaseEnabled = configuration.AutoReleaseEnabled;
+        if (ImGui.Checkbox("释放", ref releaseEnabled))
+        {
+            configuration.AutoReleaseEnabled = releaseEnabled;
             configuration.Save();
         }
 
@@ -1080,11 +1286,16 @@ public sealed class PluginUI
                 case nameof(configuration.AdvancedActionsEnabled):
                     configuration.AdvancedActionsEnabled = value;
                     break;
-                case nameof(configuration.AutoUltimateEnabled):
-                    configuration.AutoUltimateEnabled = value;
+                case nameof(configuration.BeastHeartCooperationEnabled):
+                    configuration.BeastHeartCooperationEnabled = value;
+                    if (value) configuration.BeastSoulCooperationEnabled = false;
                     break;
-                case nameof(configuration.AutoCooperationEnabled):
-                    configuration.AutoCooperationEnabled = value;
+                case nameof(configuration.BeastSoulCooperationEnabled):
+                    configuration.BeastSoulCooperationEnabled = value;
+                    if (value) configuration.BeastHeartCooperationEnabled = false;
+                    break;
+                case nameof(configuration.AutoReleaseEnabled):
+                    configuration.AutoReleaseEnabled = value;
                     break;
                 case nameof(configuration.ShowGaugeInOverlay):
                     configuration.ShowGaugeInOverlay = value;
@@ -1144,6 +1355,11 @@ public sealed class PluginUI
             SetDebugResult(debugDataService.FindBeastmasterAttributes());
         }
 
+        if (ImGui.Button("读取推荐装备物品 ID"))
+        {
+            SetDebugResult(debugDataService.FindRecommendedEquipmentIds());
+        }
+
         if (ImGui.Button("读取当前目标状态"))
         {
             SetDebugResult(debugDataService.GetCurrentTargetDebug());
@@ -1153,6 +1369,11 @@ public sealed class PluginUI
         if (ImGui.Button("读取当前连击状态"))
         {
             SetDebugResult(debugDataService.GetComboDebug());
+        }
+
+        if (ImGui.Button("读取协力验证数据"))
+        {
+            SetDebugResult(debugDataService.GetCooperationValidationDebug());
         }
 
         if (ImGui.Button("读取当前角色"))

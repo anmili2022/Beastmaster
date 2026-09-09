@@ -68,36 +68,10 @@ public sealed class BeastmasterNavigationService : IDisposable
         SetMapFlag(location);
         if (DalamudApi.ClientState.TerritoryType != location.TerritoryType)
         {
-            return TeleportAndContinue(location, false);
+            return TeleportAndContinue(location, true);
         }
 
-        try
-        {
-            if (!isReady.InvokeFunc())
-            {
-                pendingVnavLocation = location;
-                pendingVnavFieldNavigation = false;
-                DalamudApi.ChatGui.Print("[驯兽师助手] vnavmesh 未就绪，准备完成后将自动开始导航。 ");
-                return true;
-            }
-
-            var target = nearestPoint.InvokeFunc(location.Position, 120f, 300f) ?? location.Position;
-            // Quest NPCs are ground interaction targets. Flying requests fail in city maps
-            // even when vnavmesh accepts the IPC call itself.
-            var started = pathfindAndMoveTo.InvokeFunc(target, false);
-            if (started && configuration.ShowNavigationLogs)
-            {
-                DalamudApi.ChatGui.Print($"[驯兽师助手] 开始步行导航到 {location.Zone} {location.NpcName}。");
-            }
-
-            return started;
-        }
-        catch (Exception ex)
-        {
-            DalamudApi.Log.Warning(ex, "Failed to navigate to Beastmaster quest location.");
-            DalamudApi.ChatGui.Print($"[驯兽师助手] 导航失败：{ex.Message}");
-            return false;
-        }
+        return StartFieldNavigation(location);
     }
 
     public bool NavigateQuestTarget(BeastmasterQuestLocation location)
@@ -402,7 +376,7 @@ public sealed class BeastmasterNavigationService : IDisposable
         }
         else
         {
-            StartPathfind(location, false);
+            StartFieldNavigation(location);
         }
     }
 
