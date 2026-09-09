@@ -9,7 +9,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 7;
+    public int Version { get; set; } = 8;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -22,6 +22,11 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool ShowNavigationLogs { get; set; } = true;
     public bool AutoCaptureEnabled { get; set; }
     public bool AutoCaptureTryCapture { get; set; } = true;
+    public float CaptureHpThreshold { get; set; } = 80f;
+    public bool ShowGaugeInOverlay { get; set; }
+    public bool AdvancedActionsEnabled { get; set; }
+    public bool AutoUltimateEnabled { get; set; }
+    public bool AutoCooperationEnabled { get; set; }
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
         = new(StringComparer.Ordinal);
 
@@ -30,9 +35,10 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         this.pluginInterface = pluginInterface;
         ProgressByCharacter ??= new Dictionary<string, BeastmasterCharacterProgress>(StringComparer.Ordinal);
 
-        if (Version < 7)
+        if (Version < 8)
         {
-            Version = 7;
+            CaptureHpThreshold = Math.Clamp(CaptureHpThreshold, 1f, 100f);
+            Version = 8;
             Save();
         }
     }

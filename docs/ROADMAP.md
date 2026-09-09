@@ -30,8 +30,11 @@
 **魔兽图鉴**
 
 - 50 条图鉴数据，与灰机wiki对齐（名称、等级、获取方式）
-- 每条显示：编号、名称、等级、所属地图、获取方式、完成状态
-- 6 列表格布局，支持点击导航按钮直达
+- 每条显示：编号、名称、属性、技能、等级、所属地图、获取方式、完成状态
+- 属性按猛/坚/魔/翔彩色显示
+- 技能列显示当前魔兽大招和释放技能
+- 鼠标悬停技能列显示 ActionId、技能等级、射程和范围
+- 8 列表格布局，支持点击导航按钮直达
 - 飞行导航自动上坐骑，8 秒超时或战斗中降级为步行
 - 停止导航按钮
 - "按地图排序"黄色复选框（当前地图优先）
@@ -61,11 +64,30 @@
 - 悬浮窗显示「自动捕获中...」或「自动攻击中...」以及下一个技能
 - 悬浮窗「尝试捕获」关闭后只执行 1→2→3 连击
 - 左侧独立「自动输出」栏目管理自动输出总开关
+- 自动输出悬浮窗标题为「自动输出」
+- 悬浮窗显示当前魔兽、属性、技力、兽力、御兽之心、兽灵之心和决策原因
+- 悬浮窗可直接切换高级技能总开关、自动大招和自动协作技
+- 悬浮窗可直接调整捕获血量阈值，默认 80%
+- 自动输出栏目提供「详细模式」开关，默认关闭
+- 捕获状态按 Status.SourceId 区分自身施加和他人施加的状态
+- 捕获请求增加等待结果和目标切换重置，避免短时间重复请求
 - 悬浮窗右键打开设置页面
+
+**量谱与高级技能**
+
+- 从 `JobGaugeManager.Instance()->CurrentGauge` 只读读取驯兽师量谱
+- 技力：`CurrentGauge +0x10`，上限 250
+- 兽力：`CurrentGauge +0x11`，上限 250
+- 当前兽笛：`CurrentGauge +0x13`
+- 御兽之心/兽灵之心：`CurrentGauge +0x18` 位字段
+- 每 100 毫秒采样一次，UI 使用缓存，避免每帧访问游戏内存
+- 自动输出增加统一 Action 可用性结果和失败原因
+- 高级技能支持手动大招和开启开关后的自动大招请求；协作技目前仅进行候选和资源判断
 
 **配置**
 
-- Version 7 结构：HideCapturedBeasts、SortCatalogByLevel、AutoCompleteCatalogFromChat、AutoCaptureEnabled、AutoCaptureTryCapture
+- Version 8 结构：HideCapturedBeasts、SortCatalogByLevel、AutoCompleteCatalogFromChat、AutoCaptureEnabled、AutoCaptureTryCapture、CaptureHpThreshold、ShowGaugeInOverlay（详细模式）、AdvancedActionsEnabled、AutoUltimateEnabled、AutoCooperationEnabled
+- 捕获血量阈值 `CaptureHpThreshold` 持久化保存，范围 1%~100%
 - 按角色（ContentId）独立保存图鉴进度
 - 角色键优先使用 ContentId 十进制字符串，回退使用 Name@World
 
@@ -106,6 +128,9 @@
 - 当前角色和位置信息
 - 「读取自动捕获 ID」输出技能 Action、捕获状态 Status 和当前目标状态
 - 「读取驯兽师量谱原始数据」只读输出 JobGauges 地址附近 64 字节，不写入内存
+- 「读取魔兽属性映射」输出 50 个图鉴魔兽的 DataId、属性、IconId、大招和释放技能
+- DEBUG 提供「读取当前目标状态」和「读取当前连击状态」诊断按钮
+- 图鉴、量谱和自动输出复用 `BeastmasterSkillProfile` 统一技能资料
 - 所有 DEBUG 读取按钮自动复制结果到剪贴板
 
 **发布流程**
@@ -133,6 +158,9 @@ Beastmaster/
 │   └── release.ps1
 ├── docs/
 │   ├── ROADMAP.md
+│   ├── BST_GAUGE.md
+│   ├── BST_ACR_DESIGN.md
+│   ├── CHANGELOG.md
 │   └── release.md
 ├── Configuration/
 │   └── BeastmasterConfiguration.cs
@@ -143,6 +171,12 @@ Beastmaster/
 │   ├── Catalog/
 │   │   ├── BeastmasterCatalog.cs
 │   │   └── BeastmasterCatalogChatTracker.cs
+│   ├── Capture/
+│   │   ├── BeastmasterActionAvailability.cs
+│   │   └── BeastmasterAutoCaptureService.cs
+│   ├── Debug/
+│   │   ├── BeastmasterDebugDataService.cs
+│   │   └── BeastmasterGaugeSnapshot.cs
 │   ├── Navigation/
 │   │   └── BeastmasterNavigationService.cs
 │   ├── Progress/
@@ -158,34 +192,39 @@ Beastmaster/
 
 - 20 条 Dalamud SDK 程序集解析警告（与 Phantom 项目相同），不影响运行
 - 任务目标导航仅 71026 Sequence 1 已核对坐标；其他任务目标坐标待采集
-- 魔兽图鉴 50 条名称与 wiki 对齐，但暗光明骑士（第50条）可能对应贝希摩斯，需实际游戏验证
+- 高级技能大招已接入资源、目标、ActionManager 判断和自动请求；协作技仍等待运行时窗口数据
+- 协作技 7 秒运行时窗口尚未接入，需上线后采集并确认对应状态字段
+- 技力、兽力字段已按当前截图确认上限为 250；游戏版本更新后仍需重新核对
 
 ## 后续建议（优先级从高到低）
 
-### 1. 补全任务目标坐标
+### 1. 上线后验证量谱
 
-- 采集 13 个任务每个 Sequence 的实际地图坐标
-- 坐标经客户端核对后启用目标导航按钮
+- 对照原生量谱确认技力、兽力在技能操作前后的变化
+- 确认当前兽笛字段在召唤、切换和消失时的值
+- 采集协作量谱和 7 秒窗口的运行时状态数据
 
-### 2. 任务追踪自动化
+### 2. 协作技自动释放
 
-- 监听任务 Sequence 变化，自动更新完成状态
-- 任务完成时弹出提示
+- 采集并确认协作量谱运行时字段和 7 秒窗口
+- 在属性循环和运行时窗口均确认后接入协作技释放
+- 使用独立开关、资源门槛、目标状态和动作锁定保护
 
-### 3. FATE 自动追踪
+### 3. 自动输出测试
 
-- 检测驯兽师相关 FATE 出现
-- FATE 到期提醒
+- 测试未登录、切换职业、切换地图、未召唤和召唤兽死亡
+- 测试目标死亡、目标切换、捕获失败和技能不可用
+- 测试高级技能开关在悬浮窗和设置页之间的同步
 
-### 4. 悬浮目标窗口
+### 4. 资料维护
 
-- 紧凑窗口显示当前阶段、下一个目标、导航按钮
-- 适配不同字体和缩放
+- 游戏版本更新后重新执行 DEBUG 魔兽属性映射
+- 更新量谱偏移、ActionId、IconId 和技能名称
 
-### 5. 收藏扫描
+### 5. 任务功能增强
 
-- 扫描背包/装备/兵装库中的魔兽相关物品
-- 按角色保存扫描结果
+- 补全任务目标坐标
+- 增加任务 Sequence 变化追踪和 FATE 自动提醒
 
 ## 工程约束
 

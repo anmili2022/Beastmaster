@@ -26,6 +26,9 @@ public sealed class PluginUI
     private string debugQuery = "驯兽";
     private string debugResult = "点击按钮读取客户端资料。";
     private DateTime nextQuestStatusRefreshUtc = DateTime.MinValue;
+    private DateTime nextGaugeRefreshUtc = DateTime.MinValue;
+    private BeastmasterGaugeSnapshot gaugeSnapshot = BeastmasterGaugeSnapshot.Unavailable("等待读取");
+    private bool autoOutputCollapsed;
     private bool isMainWindowOpen;
 
     public PluginUI(
@@ -51,6 +54,7 @@ public sealed class PluginUI
 
     public void Draw()
     {
+        RefreshGaugeSnapshot();
         DrawAutoCaptureOverlay();
         if (!isMainWindowOpen)
         {
@@ -79,21 +83,58 @@ public sealed class PluginUI
         ImGui.SetNextWindowPos(new Vector2(20f, 180f), ImGuiCond.FirstUseEver);
         ImGui.SetNextWindowBgAlpha(0.9f);
         if (!ImGui.Begin(
-                "自动捕获##BeastmasterAutoCaptureOverlay",
-                ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar))
+                "##BeastmasterAutoCaptureOverlay",
+                ImGuiWindowFlags.NoTitleBar
+                | ImGuiWindowFlags.AlwaysAutoResize
+                | ImGuiWindowFlags.NoScrollbar
+                | ImGuiWindowFlags.NoScrollWithMouse
+                | ImGuiWindowFlags.NoFocusOnAppearing
+                | ImGuiWindowFlags.NoNav))
         {
             ImGui.End();
             return;
         }
 
+        DrawAutoOutputHeader();
+        if (ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows)
+            && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            configuration.SelectedMainSection = "settings";
+            configuration.Save();
+            isMainWindowOpen = true;
+        }
+
+        if (autoOutputCollapsed)
+        {
+            ImGui.End();
+            return;
+        }
+
+        ImGui.Separator();
         ImGui.TextColored(new Vector4(0.35f, 0.85f, 0.55f, 1f), autoCaptureService.StatusText);
         ImGui.Text($"下一个技能：{autoCaptureService.NextActionName}");
+        if (configuration.ShowGaugeInOverlay && !string.IsNullOrWhiteSpace(autoCaptureService.NextActionReason))
+        {
+            ImGui.TextDisabled($"原因：{autoCaptureService.NextActionReason}");
+        }
+        if (configuration.ShowGaugeInOverlay)
+        {
+            DrawOverlayGaugeSummary();
+        }
+        DrawOverlayTargetStatus();
+        if (configuration.ShowGaugeInOverlay)
+        {
+            DrawOverlayAdvancedCandidates();
+        }
         ImGui.Separator();
         var tryCapture = autoCaptureService.TryCapture;
         if (ImGui.Checkbox("尝试捕获", ref tryCapture))
         {
             autoCaptureService.SetTryCapture(tryCapture);
         }
+        ImGui.SameLine();
+        DrawCompactCaptureHpThreshold();
+        DrawOverlayAdvancedActionToggles();
 
         if (ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows)
             && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
@@ -104,6 +145,48 @@ public sealed class PluginUI
         }
 
         ImGui.End();
+    }
+
+    private void DrawAutoOutputHeader()
+    {
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.85f, 0.35f, 1f));
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("驯兽ACR");
+        ImGui.PopStyleColor();
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(autoOutputCollapsed ? "左键展开悬浮窗" : "左键折叠悬浮窗");
+        }
+
+        if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+        {
+            autoOutputCollapsed = !autoOutputCollapsed;
+        }
+
+        ImGui.SameLine();
+        DrawOverlayStatusBadge(
+            autoCaptureService.IsEnabled ? "自动" : "关闭",
+            autoCaptureService.IsEnabled
+                ? new Vector4(0.2f, 0.42f, 0.28f, 1f)
+                : new Vector4(0.3f, 0.3f, 0.34f, 1f),
+            autoCaptureService.IsEnabled
+                ? new Vector4(0.45f, 1f, 0.58f, 1f)
+                : new Vector4(0.7f, 0.7f, 0.75f, 1f));
+    }
+
+    private static void DrawOverlayStatusBadge(string label, Vector4 background, Vector4 textColor)
+    {
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 8f);
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(7f, 2f));
+        ImGui.PushStyleColor(ImGuiCol.Button, background);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, background);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, background);
+        ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0f, 0f, 0f, 0f));
+        ImGui.PushStyleColor(ImGuiCol.Text, textColor);
+        ImGui.Button(label);
+        ImGui.PopStyleColor(5);
+        ImGui.PopStyleVar(2);
     }
 
     private void DrawMainShell()
@@ -124,6 +207,126 @@ public sealed class PluginUI
         ImGui.TableNextColumn();
         DrawContent();
         ImGui.EndTable();
+    }
+
+    private void RefreshGaugeSnapshot()
+    {
+        if (DateTime.UtcNow < nextGaugeRefreshUtc)
+        {
+            return;
+        }
+
+        gaugeSnapshot = BeastmasterGaugeSnapshot.Read();
+        nextGaugeRefreshUtc = DateTime.UtcNow.AddMilliseconds(100);
+    }
+
+    private void DrawOverlayGaugeSummary()
+    {
+        if (!gaugeSnapshot.Available)
+        {
+            return;
+        }
+
+        var entry = gaugeSnapshot.SummonEntry;
+        ImGui.Text(entry == null
+            ? $"当前魔兽：{(gaugeSnapshot.SummonDataId == 0 ? "未召唤" : gaugeSnapshot.SummonName)}"
+            : $"当前魔兽：{entry.Name} [{entry.Attribute}]");
+        DrawOverlayGaugeBar("技力", gaugeSnapshot.Tp, BeastmasterGaugeSnapshot.MaximumGauge, new Vector4(0.95f, 0.75f, 0.2f, 1f));
+        DrawOverlayGaugeBar("兽力", gaugeSnapshot.BeastPower, BeastmasterGaugeSnapshot.MaximumGauge, new Vector4(0.35f, 0.7f, 1f, 1f));
+        ImGui.Text($"御兽之心：{gaugeSnapshot.BeastHeartStacks} 层 | 兽灵之心：{gaugeSnapshot.BeastSoulStacks} 层");
+    }
+
+    private void DrawOverlayTargetStatus()
+    {
+        ImGui.Text("当前目标");
+        var target = DalamudApi.TargetManager.Target;
+        if (target is not Dalamud.Game.ClientState.Objects.Types.IBattleChara)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled("无有效目标");
+            return;
+        }
+
+        ImGui.SameLine();
+        ImGui.Text(target.Name.TextValue);
+        ImGui.SameLine();
+        ImGui.TextDisabled($"{autoCaptureService.TargetHpPercent:0.#}% · {autoCaptureService.TargetStatus}");
+        if (configuration.ShowGaugeInOverlay)
+        {
+            ImGui.TextDisabled($"捕获：{autoCaptureService.CaptureState}");
+        }
+    }
+
+    private static void DrawOverlayGaugeBar(string label, float value, float maximum, Vector4 color)
+    {
+        var fraction = Math.Clamp(value / maximum, 0f, 1f);
+        ImGui.PushStyleColor(ImGuiCol.PlotHistogram, color);
+        ImGui.ProgressBar(fraction, new Vector2(-1f, 14f), $"{label} {value:0}/{maximum:0}");
+        ImGui.PopStyleColor();
+    }
+
+    private void DrawCompactCaptureHpThreshold()
+    {
+        var threshold = Math.Clamp(configuration.CaptureHpThreshold, 1f, 100f);
+        ImGui.SetNextItemWidth(120f);
+        if (ImGui.SliderFloat("##overlay-capture-threshold", ref threshold, 1f, 100f, $"{threshold:0}%"))
+        {
+            configuration.CaptureHpThreshold = threshold;
+            configuration.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("捕获血量阈值：目标低于此百分比时释放捕获");
+        }
+    }
+
+    private void DrawOverlayAdvancedCandidates()
+    {
+        if (!ImGui.CollapsingHeader("高级技能候选##BeastmasterAdvancedCandidates"))
+        {
+            return;
+        }
+
+        if (!configuration.AdvancedActionsEnabled)
+        {
+            ImGui.TextDisabled("高级技能总开关已关闭，当前只保留资源。");
+            return;
+        }
+
+        var entry = gaugeSnapshot.SummonEntry;
+        if (entry == null)
+        {
+            ImGui.TextDisabled("未识别当前魔兽，无法生成高级技能候选。");
+            return;
+        }
+
+        ImGui.TextColored(GetAttributeColor(entry.Attribute), $"属性：{entry.Attribute}");
+        DrawAdvancedCandidate(
+            "大招",
+            GetActionName(47093),
+            configuration.AutoUltimateEnabled,
+            gaugeSnapshot.Tp >= 100 && gaugeSnapshot.BeastPower >= 100
+                ? "技力和兽力满足基础门槛"
+                : $"资源不足：技力 {gaugeSnapshot.Tp}/100，兽力 {gaugeSnapshot.BeastPower}/100");
+        if (ImGui.Button($"手动释放大招##manual-ultimate-overlay"))
+        {
+            autoCaptureService.TryUseUltimate();
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled(autoCaptureService.ManualActionStatus);
+        DrawAdvancedCandidate(
+            "协作候选",
+            GetActionName(entry.ReleaseActionId),
+            configuration.AutoCooperationEnabled,
+            "协作技窗口需要运行时数据，暂不自动释放");
+    }
+
+    private static void DrawAdvancedCandidate(string type, string actionName, bool enabled, string reason)
+    {
+        ImGui.Text($"{type}：{actionName}");
+        ImGui.SameLine();
+        ImGui.TextDisabled(enabled ? reason : "开关已关闭");
     }
 
     private void DrawSidebar()
@@ -450,7 +653,7 @@ public sealed class PluginUI
 
         if (!ImGui.BeginTable(
                 "BeastmasterCatalogTable",
-                6,
+                8,
                 ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.ScrollY | ImGuiTableFlags.SizingStretchProp,
                 new Vector2(0f, 0f)))
         {
@@ -459,6 +662,8 @@ public sealed class PluginUI
 
         ImGui.TableSetupColumn("完成", ImGuiTableColumnFlags.WidthFixed, 46f);
         ImGui.TableSetupColumn("编号 / 魔兽", ImGuiTableColumnFlags.WidthFixed, 150f);
+        ImGui.TableSetupColumn("属性", ImGuiTableColumnFlags.WidthFixed, 48f);
+        ImGui.TableSetupColumn("技能", ImGuiTableColumnFlags.WidthFixed, 118f);
         ImGui.TableSetupColumn("等级", ImGuiTableColumnFlags.WidthFixed, 50f);
         ImGui.TableSetupColumn("区域 / 副本", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableSetupColumn("坐标", ImGuiTableColumnFlags.WidthFixed, 112f);
@@ -508,6 +713,17 @@ public sealed class PluginUI
             ImGui.TableNextColumn();
             ImGui.Text($"{entry.Number}. {entry.Name}");
             ImGui.TableNextColumn();
+            ImGui.TextColored(GetAttributeColor(entry.Attribute), entry.Attribute.ToString());
+            ImGui.TableNextColumn();
+            ImGui.TextWrapped($"{GetActionName(entry.UltimateActionId)} /\n{GetActionName(entry.ReleaseActionId)}");
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                DrawActionTooltip("大招", entry.UltimateActionId);
+                DrawActionTooltip("释放", entry.ReleaseActionId);
+                ImGui.EndTooltip();
+            }
+            ImGui.TableNextColumn();
             ImGui.TextUnformatted(entry.Level);
             ImGui.TableNextColumn();
             ImGui.TextUnformatted(entry.Location);
@@ -549,6 +765,34 @@ public sealed class PluginUI
         return int.TryParse(digits, out var value) ? value : int.MaxValue;
     }
 
+    private static Vector4 GetAttributeColor(BeastmasterAttribute attribute)
+        => attribute switch
+        {
+            BeastmasterAttribute.猛 => new Vector4(0.95f, 0.35f, 0.3f, 1f),
+            BeastmasterAttribute.坚 => new Vector4(0.35f, 0.65f, 1f, 1f),
+            BeastmasterAttribute.魔 => new Vector4(1f, 0.82f, 0.25f, 1f),
+            BeastmasterAttribute.翔 => new Vector4(0.4f, 0.9f, 0.5f, 1f),
+            _ => new Vector4(0.6f, 0.6f, 0.6f, 1f),
+        };
+
+    private static string GetActionName(uint actionId)
+        => DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>().TryGetRow(actionId, out var action)
+            ? action.Name.ExtractText()
+            : actionId.ToString();
+
+    private static void DrawActionTooltip(string type, uint actionId)
+    {
+        var actions = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>();
+        if (!actions.TryGetRow(actionId, out var action))
+        {
+            ImGui.TextDisabled($"{type}：ActionId {actionId} 未找到");
+            return;
+        }
+
+        ImGui.Text($"{type}：{action.Name.ExtractText()}");
+        ImGui.TextDisabled($"ActionId：{actionId} · 等级：{action.ClassJobLevel} · 射程：{action.Range} · 范围：{action.EffectRange}");
+    }
+
     private void DrawSettings()
     {
         ImGui.Text("设置");
@@ -585,6 +829,12 @@ public sealed class PluginUI
         }
         ImGui.PopStyleColor();
         ImGui.TextDisabled("仅对当前手动选择的敌对目标生效；无捕获状态时优先捕获，再执行 1→2→3 连击。");
+        DrawCaptureHpThreshold();
+        DrawSettingCheckbox(
+            "详细模式",
+            "显示悬浮窗中的原因、捕获状态、当前魔兽、量谱和高级技能候选等详细信息。默认关闭。",
+            nameof(configuration.ShowGaugeInOverlay),
+            configuration.ShowGaugeInOverlay);
 
         ImGui.Spacing();
         ImGui.Text("当前模式");
@@ -592,6 +842,209 @@ public sealed class PluginUI
             ? autoCaptureService.TryCapture ? "自动捕获中..." : "自动攻击中..."
             : "未开启");
         ImGui.TextDisabled("开启后可在悬浮窗中切换“尝试捕获”，右键悬浮窗可打开设置。");
+
+        ImGui.Spacing();
+        DrawBeastmasterGauge();
+
+        ImGui.Spacing();
+        DrawBeastmasterGaugeGuide();
+    }
+
+    private string GetAdvancedActionModeText()
+        => !configuration.AdvancedActionsEnabled
+            ? "关闭，保留资源"
+            : configuration.AutoUltimateEnabled || configuration.AutoCooperationEnabled
+                ? $"已启用（大招：{(configuration.AutoUltimateEnabled ? "开" : "关")}，协作技：{(configuration.AutoCooperationEnabled ? "开" : "关")}）"
+                : "总开关已开，但具体技能均关闭";
+
+    private void DrawOverlayAdvancedActionToggles()
+    {
+        var advancedEnabled = configuration.AdvancedActionsEnabled;
+        if (ImGui.Checkbox("高级技能", ref advancedEnabled))
+        {
+            configuration.AdvancedActionsEnabled = advancedEnabled;
+            configuration.Save();
+        }
+
+        if (!configuration.AdvancedActionsEnabled)
+        {
+            return;
+        }
+
+        ImGui.Indent();
+        var ultimateEnabled = configuration.AutoUltimateEnabled;
+        if (ImGui.Checkbox("自动大招", ref ultimateEnabled))
+        {
+            configuration.AutoUltimateEnabled = ultimateEnabled;
+            configuration.Save();
+        }
+
+        var cooperationEnabled = configuration.AutoCooperationEnabled;
+        if (ImGui.Checkbox("自动协作技", ref cooperationEnabled))
+        {
+            configuration.AutoCooperationEnabled = cooperationEnabled;
+            configuration.Save();
+        }
+
+        ImGui.Unindent();
+    }
+
+    private void DrawCaptureHpThreshold()
+    {
+        var threshold = Math.Clamp(configuration.CaptureHpThreshold, 1f, 100f);
+        ImGui.SetNextItemWidth(180f);
+        if (ImGui.SliderFloat("捕获血量阈值", ref threshold, 1f, 100f, "%.0f%%"))
+        {
+            configuration.CaptureHpThreshold = threshold;
+            configuration.Save();
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled("目标低于此血量时释放捕获");
+    }
+
+    private void DrawBeastmasterGauge()
+    {
+        ImGui.Separator();
+        ImGui.Text("当前量谱");
+        ImGui.TextDisabled("只读显示当前驯兽师量谱状态；数据来自 JobGaugeManager.CurrentGauge。");
+
+        var snapshot = gaugeSnapshot;
+        ImGui.TextColored(
+            snapshot.Available
+                ? new Vector4(0.35f, 0.85f, 0.55f, 1f)
+                : new Vector4(0.9f, 0.55f, 0.35f, 1f),
+            snapshot.Status);
+
+        if (!snapshot.Available)
+        {
+            return;
+        }
+
+        DrawCurrentSummon(snapshot);
+
+        if (ImGui.BeginTable(
+                "BeastmasterGaugeState",
+                2,
+                ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("字段", ImGuiTableColumnFlags.WidthFixed, 150f);
+            ImGui.TableSetupColumn("当前值", ImGuiTableColumnFlags.WidthStretch);
+            DrawGaugeRow("技力", $"{snapshot.Tp} / {BeastmasterGaugeSnapshot.MaximumGauge}", "基础技能资源");
+            DrawGaugeRow("兽力", $"{snapshot.BeastPower} / {BeastmasterGaugeSnapshot.MaximumGauge}", "兽心技能资源");
+            DrawGaugeRow("当前兽笛", snapshot.WhistleIndex is >= 1 and <= 3
+                ? $"{snapshot.WhistleIndex} 号"
+                : "未召唤", "当前兽笛类型");
+            DrawGaugeRow("御兽之心", $"{snapshot.BeastHeartStacks} 层", "协作量谱");
+            DrawGaugeRow("兽灵之心", $"{snapshot.BeastSoulStacks} 层", "协作量谱");
+            ImGui.EndTable();
+        }
+
+        ImGui.TextDisabled($"当前决策：{GetGaugeDecision(snapshot)}");
+        ImGui.TextDisabled($"高级技能判断：{autoCaptureService.AdvancedActionStatus}");
+
+        if (ImGui.CollapsingHeader("量谱原始数据##BeastmasterGaugeRaw"))
+        {
+            ImGui.TextDisabled($"Address: 0x{snapshot.Address.ToInt64():X}");
+            ImGui.TextWrapped($"48 bytes：{snapshot.FormatRawBytes()}");
+            ImGui.TextDisabled("字段偏移：技能量 +0x10，魔兽技力 +0x11，当前兽笛 +0x13，御兽之心/兽灵之心 +0x18。");
+        }
+    }
+
+    private static void DrawCurrentSummon(BeastmasterGaugeSnapshot snapshot)
+    {
+        if (snapshot.SummonDataId == 0)
+        {
+            ImGui.TextDisabled("当前魔兽：未召唤");
+            return;
+        }
+
+        var entry = BeastmasterCatalog.Entries.FirstOrDefault(
+            item => item.Number == snapshot.SummonDataId - 18915);
+        if (entry == null)
+        {
+            ImGui.TextDisabled($"当前魔兽：{snapshot.SummonName}（DataId {snapshot.SummonDataId}）");
+            return;
+        }
+
+        ImGui.Text("当前魔兽");
+        ImGui.SameLine();
+        ImGui.Text(entry.Name);
+        ImGui.SameLine();
+        ImGui.TextColored(GetAttributeColor(entry.Attribute), $"[{entry.Attribute}]");
+        ImGui.TextDisabled($"大招：{GetActionName(entry.UltimateActionId)} | 释放：{GetActionName(entry.ReleaseActionId)}");
+    }
+
+    private static string GetGaugeDecision(BeastmasterGaugeSnapshot snapshot)
+    {
+        if (snapshot.SummonDataId == 0)
+        {
+            return "等待召唤兽";
+        }
+
+        if (snapshot.Tp < BeastmasterGaugeSnapshot.ComboGaugeRequirement)
+        {
+            return $"积累技力（{snapshot.Tp}/{BeastmasterGaugeSnapshot.MaximumGauge}）";
+        }
+
+        if (snapshot.BeastPower < BeastmasterGaugeSnapshot.ComboGaugeRequirement)
+        {
+            return $"积累兽力（{snapshot.BeastPower}/{BeastmasterGaugeSnapshot.MaximumGauge}）";
+        }
+
+        return snapshot.BeastHeartStacks > 0
+            ? "技力与兽力已满足，可结合御兽之心安排协作技"
+            : "技力与兽力已满足，可执行连招";
+    }
+
+    private static void DrawGaugeRow(string name, object value, string description)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text(name);
+        ImGui.TableNextColumn();
+        ImGui.Text(value.ToString());
+        ImGui.SameLine();
+        ImGui.TextDisabled(description);
+    }
+
+    private static void DrawBeastmasterGaugeGuide()
+    {
+        if (!ImGui.CollapsingHeader("量谱说明##BeastmasterGaugeGuide"))
+        {
+            return;
+        }
+
+        ImGui.TextDisabled("以下说明整理自驯兽师职业量谱和技能逻辑。量谱区只读显示当前状态，不会修改游戏数据。");
+        ImGui.Separator();
+
+        DrawGuideTitle("技力 / 兽力");
+        ImGui.TextWrapped("学会兽心特性后，技能栏会显示驯兽师专用的技能量谱。连续成功时，技力会增加；技力越高，战技威力越高。");
+        ImGui.TextWrapped("技力和兽力是驯兽师职业量谱中的两种资源，当前上限均为 250。资源越高，越容易满足对应技能和协作技的使用要求。");
+
+        ImGui.Spacing();
+        DrawGuideTitle("御兽之心");
+        ImGui.TextWrapped("学会兽心 II 特性后，画面会显示御兽之心的状态。驯兽师成功通过兽心技鼓舞发动兽心协作技后，会获得一档御兽之心。");
+        ImGui.TextWrapped("发动技能鼓劲可以消耗全部御兽之心，并提升驯兽师的技力。消耗的御兽之心档数越高，技力提升越高。");
+
+        ImGui.Spacing();
+        DrawGuideTitle("协作量谱");
+        ImGui.TextWrapped("协作量谱显示当前兽心协作技的状态。兽心技共有翔、猛、坚、魔四种属性，每次发动兽心技时，都会点亮对应的属性圆格。");
+        ImGui.TextWrapped("当驯兽师或魔兽一方发动兽心技后，只要另一方在 7 秒内发动技能，即可触发兽心协作技的追击伤害。");
+        ImGui.TextWrapped("协作量谱下方显示的数字是协作次数。协作次数越多，兽心协作技的威力越高。");
+
+        ImGui.Spacing();
+        DrawGuideTitle("生息 / 死灭");
+        ImGui.TextWrapped("参考“翔→猛→坚→魔→翔”的属性循环，按顺时针顺序触发兽心协作技，可以发动更强的生息或死灭协作技。");
+        ImGui.TextWrapped("触发兽心协作技二式后，驯兽师将获得生息或死灭的兽心技属性；该属性会点亮协作量谱的中心，并影响后续协作技。");
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(1f, 0.9f, 0.25f, 1f), "职业量谱的完整说明可随时在技能菜单中查看。");
+    }
+
+    private static void DrawGuideTitle(string title)
+    {
+        ImGui.TextColored(new Vector4(1f, 0.65f, 0.2f, 1f), title);
     }
 
     private static void DrawDependency(string name, bool available, string purpose)
@@ -623,6 +1076,18 @@ public sealed class PluginUI
                     break;
                 case nameof(configuration.ShowNavigationLogs):
                     configuration.ShowNavigationLogs = value;
+                    break;
+                case nameof(configuration.AdvancedActionsEnabled):
+                    configuration.AdvancedActionsEnabled = value;
+                    break;
+                case nameof(configuration.AutoUltimateEnabled):
+                    configuration.AutoUltimateEnabled = value;
+                    break;
+                case nameof(configuration.AutoCooperationEnabled):
+                    configuration.AutoCooperationEnabled = value;
+                    break;
+                case nameof(configuration.ShowGaugeInOverlay):
+                    configuration.ShowGaugeInOverlay = value;
                     break;
             }
 
@@ -672,6 +1137,22 @@ public sealed class PluginUI
         if (ImGui.Button("读取驯兽师量谱原始数据"))
         {
             SetDebugResult(debugDataService.GetBeastmasterGaugeRaw());
+        }
+
+        if (ImGui.Button("读取魔兽属性映射"))
+        {
+            SetDebugResult(debugDataService.FindBeastmasterAttributes());
+        }
+
+        if (ImGui.Button("读取当前目标状态"))
+        {
+            SetDebugResult(debugDataService.GetCurrentTargetDebug());
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("读取当前连击状态"))
+        {
+            SetDebugResult(debugDataService.GetComboDebug());
         }
 
         if (ImGui.Button("读取当前角色"))

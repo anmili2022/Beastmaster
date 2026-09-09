@@ -8,6 +8,15 @@ public enum BeastmasterCatalogLocationType
     Unknown,
 }
 
+public enum BeastmasterAttribute
+{
+    Unknown,
+    猛,
+    坚,
+    魔,
+    翔,
+}
+
 public sealed record BeastmasterCatalogEntry(
     int Number,
     string Name,
@@ -24,10 +33,35 @@ public sealed record BeastmasterCatalogEntry(
     uint ContentFinderConditionId = 0)
 {
     public string Key => $"catalog-{Number:00}";
+
+    public BeastmasterAttribute Attribute => BeastmasterCatalog.GetAttribute(Number);
+
+    public uint UltimateActionId => (uint)(44933 + Number * 2);
+
+    public uint ReleaseActionId => UltimateActionId + 1;
+
+    public uint SummonDataId => (uint)(18915 + Number);
+
+    public BeastmasterSkillProfile SkillProfile
+        => new(Number, Name, SummonDataId, Attribute, UltimateActionId, ReleaseActionId);
 }
 
 public static class BeastmasterCatalog
 {
+    private static readonly BeastmasterAttribute[] Attributes =
+    [
+        BeastmasterAttribute.猛, BeastmasterAttribute.猛, BeastmasterAttribute.猛, BeastmasterAttribute.坚, BeastmasterAttribute.猛,
+        BeastmasterAttribute.魔, BeastmasterAttribute.魔, BeastmasterAttribute.猛, BeastmasterAttribute.坚, BeastmasterAttribute.翔,
+        BeastmasterAttribute.翔, BeastmasterAttribute.猛, BeastmasterAttribute.魔, BeastmasterAttribute.猛, BeastmasterAttribute.坚,
+        BeastmasterAttribute.坚, BeastmasterAttribute.魔, BeastmasterAttribute.坚, BeastmasterAttribute.翔, BeastmasterAttribute.翔,
+        BeastmasterAttribute.坚, BeastmasterAttribute.猛, BeastmasterAttribute.魔, BeastmasterAttribute.坚, BeastmasterAttribute.魔,
+        BeastmasterAttribute.猛, BeastmasterAttribute.坚, BeastmasterAttribute.魔, BeastmasterAttribute.猛, BeastmasterAttribute.猛,
+        BeastmasterAttribute.魔, BeastmasterAttribute.翔, BeastmasterAttribute.魔, BeastmasterAttribute.坚, BeastmasterAttribute.猛,
+        BeastmasterAttribute.魔, BeastmasterAttribute.猛, BeastmasterAttribute.猛, BeastmasterAttribute.猛, BeastmasterAttribute.翔,
+        BeastmasterAttribute.坚, BeastmasterAttribute.坚, BeastmasterAttribute.坚, BeastmasterAttribute.翔, BeastmasterAttribute.魔,
+        BeastmasterAttribute.翔, BeastmasterAttribute.坚, BeastmasterAttribute.坚, BeastmasterAttribute.魔, BeastmasterAttribute.魔,
+    ];
+
     public static IReadOnlyList<BeastmasterCatalogEntry> Entries { get; } =
     [
         new(1, "库西", BeastmasterCatalogLocationType.Starting, "初始自带", 0, null, null, ""),
@@ -81,4 +115,7 @@ public static class BeastmasterCatalog
         new(49, "大王花", BeastmasterCatalogLocationType.Duty, "巴哈姆特大迷宫入侵之章1", 0, null, null, "50", 0, null, null, null, 98),
         new(50, "贝希摩斯", BeastmasterCatalogLocationType.Duty, "水晶塔古代人迷宫", 0, null, null, "50", 0, null, null, null, 92),
     ];
+
+    public static BeastmasterAttribute GetAttribute(int number)
+        => number is >= 1 and <= 50 ? Attributes[number - 1] : BeastmasterAttribute.Unknown;
 }

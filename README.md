@@ -9,6 +9,9 @@
 - 支持手动修改、隐藏已捕获魔兽，并按地图排列图鉴目标。
 - 支持任务接取点和野外图鉴目标导航。
 - 可配合 vnavmesh 和 Lifestream 完成同地图移动及跨地图传送。
+- 魔兽图鉴显示属性、大招和释放技能信息。
+- 自动输出悬浮窗显示当前魔兽和驯兽师量谱状态。
+- 高级技能支持独立开关和只读可用性判断。
 
 ## 安装
 
@@ -30,5 +33,7 @@ dotnet build
 ```
 
 构建结果位于 `output\Beastmaster.dll`。
+
+量谱资料见 [docs/BST_GAUGE.md](docs/BST_GAUGE.md)，ACR 设计见 [docs/BST_ACR_DESIGN.md](docs/BST_ACR_DESIGN.md)，开发路线见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 发布流程见 [docs/release.md](docs/release.md)。

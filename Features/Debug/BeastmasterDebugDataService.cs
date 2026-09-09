@@ -3,6 +3,7 @@ using Dalamud.Game.ClientState.Objects.Types;
 using System.Globalization;
 using System.Numerics;
 using System.Text;
+using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace Beastmaster;
 
@@ -274,6 +275,111 @@ public sealed class BeastmasterDebugDataService
         return builder.ToString().TrimEnd();
     }
 
+    public string FindBeastmasterAttributes()
+    {
+        var actions = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>();
+        var builder = new StringBuilder()
+            .AppendLine("类型: 驯兽师魔兽属性映射")
+            .AppendLine("来源: 魔兽图鉴编号 + 召唤物 DataId + 大招 Action IconId")
+            .AppendLine("属性 IconId: 3906=猛，3907=坚，3908=魔，3909=翔")
+            .AppendLine();
+
+        for (var number = 1; number <= BeastmasterCatalog.Entries.Count; number++)
+        {
+            var entry = BeastmasterCatalog.Entries[number - 1];
+            var dataId = (uint)(18915 + number);
+            var hasSkills = TryGetSummonSkills(dataId, out var ultimateId, out var releaseId);
+            var ultimate = hasSkills && actions.TryGetRow(ultimateId, out var ultimateAction)
+                ? ultimateAction
+                : default;
+            var release = hasSkills && actions.TryGetRow(releaseId, out var releaseAction)
+                ? releaseAction
+                : default;
+            var iconId = hasSkills ? ultimate.Icon : 0;
+            var attribute = iconId switch
+            {
+                3906 => "猛",
+                3907 => "坚",
+                3908 => "魔",
+                3909 => "翔",
+                _ => "未知",
+            };
+
+            builder.AppendLine($"图鉴 {entry.Number:00} | {entry.Name} | DataId={dataId}");
+            builder.AppendLine($"  大招 ActionId={ultimateId} | {GetActionName(ultimate)} | IconId={iconId} | 属性={attribute}");
+            builder.AppendLine($"  释放 ActionId={releaseId} | {GetActionName(release)}");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public string GetCurrentTargetDebug()
+    {
+        var target = DalamudApi.TargetManager.Target;
+        if (target is not IBattleChara battleTarget)
+        {
+            return "类型: 当前目标\n无有效 BattleNpc 目标。";
+        }
+
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var statuses = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Status>();
+        var builder = new StringBuilder()
+            .AppendLine("类型: 当前目标")
+            .AppendLine($"名称: {battleTarget.Name.TextValue}")
+            .AppendLine($"EntityId: {battleTarget.EntityId}")
+            .AppendLine($"BaseId: {battleTarget.BaseId}")
+            .AppendLine($"HP: {battleTarget.CurrentHp} / {battleTarget.MaxHp}")
+            .AppendLine($"血量: {(battleTarget.MaxHp == 0 ? 0 : battleTarget.CurrentHp * 100f / battleTarget.MaxHp):0.##}%")
+            .AppendLine($"可选中: {battleTarget.IsTargetable}")
+            .AppendLine($"死亡: {battleTarget.IsDead}")
+            .AppendLine("状态:");
+
+        foreach (var status in battleTarget.StatusList.OrderBy(status => status.StatusId))
+        {
+            var name = statuses.TryGetRow(status.StatusId, out var row) ? row.Name.ExtractText() : "";
+            var sourceType = player != null && status.SourceId == player.EntityId ? "自身" : "他人/未知";
+            builder.AppendLine($"  StatusId={status.StatusId} | {name} | SourceId={status.SourceId} | 来源={sourceType} | 剩余={status.RemainingTime:0.0}s");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string GetComboDebug()
+    {
+        var manager = ActionManager.Instance();
+        if (manager == null)
+        {
+            return "类型: 当前连击\nActionManager 不可用。";
+        }
+
+        return new StringBuilder()
+            .AppendLine("类型: 当前连击")
+            .AppendLine("模式: 只读")
+            .AppendLine($"Combo.Action: {manager->Combo.Action}")
+            .AppendLine($"Combo.Timer: {manager->Combo.Timer:0.000}s")
+            .AppendLine("说明: Timer 大于 0 表示当前连击窗口仍有效。")
+            .ToString()
+            .TrimEnd();
+    }
+
+    private static bool TryGetSummonSkills(uint dataId, out uint ultimateId, out uint releaseId)
+    {
+        var index = (int)dataId - 18915;
+        if (index is < 1 or > 50)
+        {
+            ultimateId = 0;
+            releaseId = 0;
+            return false;
+        }
+
+        ultimateId = (uint)(44933 + index * 2);
+        releaseId = ultimateId + 1;
+        return true;
+    }
+
+    private static string GetActionName(Lumina.Excel.Sheets.Action action)
+        => action.RowId == 0 ? "未找到" : action.Name.ExtractText();
+
     public unsafe string GetBeastmasterGaugeRaw()
     {
         const uint beastmasterClassJobId = 43;
@@ -282,14 +388,15 @@ public sealed class BeastmasterDebugDataService
             return "类型: 驯兽师量谱原始数据\n请先切换为驯兽师。";
         }
 
-        var address = DalamudApi.JobGauges.Address;
-        if (address == nint.Zero)
+        var snapshot = BeastmasterGaugeSnapshot.ReadRaw();
+        if (!snapshot.Available)
         {
-            return "类型: 驯兽师量谱原始数据\nJobGauges.Address 不可用。";
+            return $"类型: 驯兽师量谱原始数据\n{snapshot.Status}。";
         }
 
-        const int length = 64;
-        var bytes = new ReadOnlySpan<byte>((void*)address, length);
+        var address = snapshot.Address;
+        var bytes = snapshot.Bytes.AsSpan();
+        var length = bytes.Length;
         var uint16Values = new ushort[length / 2];
         var uint32Values = new uint[length / 4];
         for (var index = 0; index < uint16Values.Length; index++)
