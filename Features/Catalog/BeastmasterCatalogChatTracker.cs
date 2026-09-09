@@ -8,6 +8,7 @@ public sealed partial class BeastmasterCatalogChatTracker : IDisposable
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["羊羔"] = "迷途羊羔",
+            ["幽灵"] = "妖魂",
         };
 
     private readonly BeastmasterConfiguration configuration;

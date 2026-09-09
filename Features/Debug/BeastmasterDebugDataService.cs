@@ -274,6 +274,46 @@ public sealed class BeastmasterDebugDataService
         return builder.ToString().TrimEnd();
     }
 
+    public unsafe string GetBeastmasterGaugeRaw()
+    {
+        const uint beastmasterClassJobId = 43;
+        if (DalamudApi.PlayerState.ClassJob.RowId != beastmasterClassJobId)
+        {
+            return "类型: 驯兽师量谱原始数据\n请先切换为驯兽师。";
+        }
+
+        var address = DalamudApi.JobGauges.Address;
+        if (address == nint.Zero)
+        {
+            return "类型: 驯兽师量谱原始数据\nJobGauges.Address 不可用。";
+        }
+
+        const int length = 64;
+        var bytes = new ReadOnlySpan<byte>((void*)address, length);
+        var uint16Values = new ushort[length / 2];
+        var uint32Values = new uint[length / 4];
+        for (var index = 0; index < uint16Values.Length; index++)
+        {
+            uint16Values[index] = BitConverter.ToUInt16(bytes.Slice(index * 2, 2));
+        }
+
+        for (var index = 0; index < uint32Values.Length; index++)
+        {
+            uint32Values[index] = BitConverter.ToUInt32(bytes.Slice(index * 4, 4));
+        }
+
+        var builder = new StringBuilder()
+            .AppendLine("类型: 驯兽师量谱原始数据")
+            .AppendLine("模式: 只读，不写入内存")
+            .AppendLine($"ClassJob: {beastmasterClassJobId}")
+            .AppendLine($"Address: 0x{address.ToInt64():X}")
+            .AppendLine($"Length: {length} bytes")
+            .AppendLine($"Hex: {string.Join(' ', bytes.ToArray().Select(value => value.ToString("X2")))}")
+            .AppendLine($"UInt16: {string.Join(' ', uint16Values)}")
+            .AppendLine($"UInt32: {string.Join(' ', uint32Values)}");
+        return builder.ToString().TrimEnd();
+    }
+
     private static string FormatMatches(
         string category,
         string query,

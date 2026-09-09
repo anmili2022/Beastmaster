@@ -12,6 +12,7 @@ public sealed class PluginUI
         ("quests", "驯兽师任务链"),
         ("catalog", "魔兽图鉴"),
         ("commands", "快捷指令"),
+        ("auto-output", "自动输出"),
         ("settings", "设置"),
         ("debug", "DEBUG"),
     ];
@@ -94,6 +95,14 @@ public sealed class PluginUI
             autoCaptureService.SetTryCapture(tryCapture);
         }
 
+        if (ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows)
+            && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            configuration.SelectedMainSection = "settings";
+            configuration.Save();
+            isMainWindowOpen = true;
+        }
+
         ImGui.End();
     }
 
@@ -127,10 +136,11 @@ public sealed class PluginUI
         DrawSidebarButton(MainSections[0]);
         DrawSidebarButton(MainSections[1]);
         DrawSidebarButton(MainSections[2]);
+        DrawSidebarButton(MainSections[3]);
 
         ImGui.Separator();
         DrawSidebarLabel("工具");
-        DrawSidebarButton(MainSections[3]);
+        DrawSidebarButton(MainSections[4]);
 
         if (ImGui.Button("反馈与建议", new Vector2(ImGui.GetContentRegionAvail().X, 30f)))
         {
@@ -141,7 +151,7 @@ public sealed class PluginUI
             });
         }
 
-        DrawSidebarButton(MainSections[4]);
+        DrawSidebarButton(MainSections[5]);
     }
 
     private void DrawSidebarButton((string Key, string Label) section)
@@ -183,6 +193,9 @@ public sealed class PluginUI
             case "commands":
                 DrawCommands();
                 break;
+            case "auto-output":
+                DrawAutoOutput();
+                break;
             case "settings":
                 DrawSettings();
                 break;
@@ -199,6 +212,15 @@ public sealed class PluginUI
     private void DrawQuests()
     {
         ImGui.Text("驯兽师任务链");
+        ImGui.SameLine();
+        if (ImGui.Button("WIKI##quest-wiki"))
+        {
+            Process.Start(new ProcessStartInfo("https://ff14.huijiwiki.com/wiki/%E9%A9%AF%E5%85%BD%E5%B8%88#%E7%89%B9%E8%81%8C%E4%BB%BB%E5%8A%A1")
+            {
+                UseShellExecute = true,
+            });
+        }
+
         ImGui.SameLine();
         var stopButtonWidth = ImGui.CalcTextSize("停止导航").X + ImGui.GetStyle().FramePadding.X * 2f;
         var stopButtonX = ImGui.GetWindowContentRegionMax().X - stopButtonWidth;
@@ -344,12 +366,17 @@ public sealed class PluginUI
     {
         ImGui.Text("快捷指令");
         ImGui.Separator();
-        if (ImGui.Button("魔兽图鉴"))
+        DrawGameCommandButton("魔兽图鉴", "/魔兽图鉴");
+        DrawGameCommandButton("驯兽师魔兽-小", "/beastpetsize all small");
+        DrawGameCommandButton("驯兽师魔兽-中", "/beastpetsize all medium");
+        DrawGameCommandButton("驯兽师魔兽-大", "/beastpetsize all large");
+    }
+
+    private static void DrawGameCommandButton(string label, string command)
+    {
+        if (ImGui.Button(label) && !GameCommandService.Execute(command))
         {
-            if (!GameCommandService.Execute("/魔兽图鉴"))
-            {
-                DalamudApi.ChatGui.Print("[驯兽师助手] 无法执行 /魔兽图鉴。");
-            }
+            DalamudApi.ChatGui.Print($"[驯兽师助手] 无法执行 {command}。");
         }
     }
 
@@ -388,6 +415,13 @@ public sealed class PluginUI
         if (ImGui.Checkbox("按地图排序", ref sortByLocation))
         {
             configuration.SortCatalogByLocation = sortByLocation;
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        var sortByLevel = configuration.SortCatalogByLevel;
+        if (ImGui.Checkbox("按等级排序", ref sortByLevel))
+        {
+            configuration.SortCatalogByLevel = sortByLevel;
             configuration.Save();
         }
         ImGui.SameLine();
@@ -438,6 +472,13 @@ public sealed class PluginUI
             sortedEntries = displayedEntries
                 .OrderBy(entry => !entry.Location.Equals(currentMapName, StringComparison.Ordinal))
                 .ThenBy(entry => entry.Location, StringComparer.Ordinal)
+                .ThenBy(entry => configuration.SortCatalogByLevel ? GetCatalogMinimumLevel(entry.Level) : int.MaxValue)
+                .ThenBy(entry => entry.Number);
+        }
+        else if (configuration.SortCatalogByLevel)
+        {
+            sortedEntries = displayedEntries
+                .OrderBy(entry => GetCatalogMinimumLevel(entry.Level))
                 .ThenBy(entry => entry.Number);
         }
         else
@@ -502,6 +543,12 @@ public sealed class PluginUI
             _ => "未知",
         };
 
+    private static int GetCatalogMinimumLevel(string level)
+    {
+        var digits = new string(level.TakeWhile(char.IsDigit).ToArray());
+        return int.TryParse(digits, out var value) ? value : int.MaxValue;
+    }
+
     private void DrawSettings()
     {
         ImGui.Text("设置");
@@ -514,18 +561,6 @@ public sealed class PluginUI
 
         ImGui.Text("常用设置");
         ImGui.TextDisabled($"当前角色：{progressService.CurrentCharacterLabel}");
-        var autoCaptureEnabled = autoCaptureService.IsEnabled;
-        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.82f, 0.25f, 1f));
-        if (ImGui.Checkbox("自动捕获", ref autoCaptureEnabled))
-        {
-            autoCaptureService.SetEnabled(autoCaptureEnabled);
-        }
-        ImGui.PopStyleColor();
-        ImGui.TextDisabled("仅对当前手动选择的敌对目标生效；无捕获状态时优先捕获，再执行 1→2→3 连击。");
-        if (autoCaptureEnabled && ImGui.Button("停止自动捕获"))
-        {
-            autoCaptureService.SetEnabled(false);
-        }
         DrawSettingCheckbox("隐藏已完成任务", "任务页只显示未完成的驯兽师任务。", nameof(configuration.HideCompletedQuests), configuration.HideCompletedQuests);
         DrawSettingCheckbox("捕获消息自动记录", "收到成功结识消息时自动标记图鉴完成。", nameof(configuration.AutoCompleteCatalogFromChat), configuration.AutoCompleteCatalogFromChat);
         ImGui.Spacing();
@@ -534,6 +569,29 @@ public sealed class PluginUI
         DrawSettingCheckbox("飞行导航", "允许 vnavmesh 使用飞行路径。", nameof(configuration.UseFlightNavigation), configuration.UseFlightNavigation);
         DrawSettingCheckbox("设置地图标记", "点击导航时同步设置游戏地图 Flag。", nameof(configuration.SetFlagOnNavigation), configuration.SetFlagOnNavigation);
         DrawSettingCheckbox("显示导航日志", "在聊天栏显示导航开始和失败信息。", nameof(configuration.ShowNavigationLogs), configuration.ShowNavigationLogs);
+    }
+
+    private void DrawAutoOutput()
+    {
+        ImGui.Text("自动输出");
+        ImGui.TextDisabled("配置自动捕获和自动攻击行为。");
+        ImGui.Separator();
+
+        var enabled = autoCaptureService.IsEnabled;
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.82f, 0.25f, 1f));
+        if (ImGui.Checkbox("自动输出", ref enabled))
+        {
+            autoCaptureService.SetEnabled(enabled);
+        }
+        ImGui.PopStyleColor();
+        ImGui.TextDisabled("仅对当前手动选择的敌对目标生效；无捕获状态时优先捕获，再执行 1→2→3 连击。");
+
+        ImGui.Spacing();
+        ImGui.Text("当前模式");
+        ImGui.Text(autoCaptureService.IsEnabled
+            ? autoCaptureService.TryCapture ? "自动捕获中..." : "自动攻击中..."
+            : "未开启");
+        ImGui.TextDisabled("开启后可在悬浮窗中切换“尝试捕获”，右键悬浮窗可打开设置。");
     }
 
     private static void DrawDependency(string name, bool available, string purpose)
@@ -586,40 +644,45 @@ public sealed class PluginUI
 
         if (ImGui.Button("读取任务：驯养魔兽之人"))
         {
-            debugResult = debugDataService.FindQuests("驯养魔兽之人");
+            SetDebugResult(debugDataService.FindQuests("驯养魔兽之人"));
         }
 
         ImGui.SameLine();
         if (ImGui.Button("采集当前所有任务状态"))
         {
-            debugResult = questService.GetActiveQuestsDebug();
+            SetDebugResult(questService.GetActiveQuestsDebug());
         }
 
         if (ImGui.Button("读取驯兽师任务链"))
         {
-            debugResult = debugDataService.FindBeastmasterQuestChain();
+            SetDebugResult(debugDataService.FindBeastmasterQuestChain());
         }
 
         if (ImGui.Button("读取图鉴副本 ID"))
         {
-            debugResult = debugDataService.FindCatalogDuties();
+            SetDebugResult(debugDataService.FindCatalogDuties());
         }
 
         ImGui.SameLine();
         if (ImGui.Button("读取自动捕获 ID"))
         {
-            debugResult = debugDataService.FindAutoCaptureData();
+            SetDebugResult(debugDataService.FindAutoCaptureData());
+        }
+
+        if (ImGui.Button("读取驯兽师量谱原始数据"))
+        {
+            SetDebugResult(debugDataService.GetBeastmasterGaugeRaw());
         }
 
         if (ImGui.Button("读取当前角色"))
         {
-            debugResult = debugDataService.GetCharacter();
+            SetDebugResult(debugDataService.GetCharacter());
         }
 
         ImGui.SameLine();
         if (ImGui.Button("读取当前位置"))
         {
-            debugResult = debugDataService.GetLocation();
+            SetDebugResult(debugDataService.GetLocation());
         }
 
         ImGui.SameLine();
@@ -639,16 +702,22 @@ public sealed class PluginUI
 
     private void DrawDebugSearchButtons()
     {
-        if (ImGui.Button("读取职业")) debugResult = debugDataService.FindClassJobs(debugQuery);
+        if (ImGui.Button("读取职业")) SetDebugResult(debugDataService.FindClassJobs(debugQuery));
         ImGui.SameLine();
-        if (ImGui.Button("读取任务")) debugResult = debugDataService.FindQuests(debugQuery);
+        if (ImGui.Button("读取任务")) SetDebugResult(debugDataService.FindQuests(debugQuery));
         ImGui.SameLine();
-        if (ImGui.Button("读取物品")) debugResult = debugDataService.FindItems(debugQuery);
+        if (ImGui.Button("读取物品")) SetDebugResult(debugDataService.FindItems(debugQuery));
         ImGui.SameLine();
-        if (ImGui.Button("读取 NPC")) debugResult = debugDataService.FindNpcs(debugQuery);
+        if (ImGui.Button("读取 NPC")) SetDebugResult(debugDataService.FindNpcs(debugQuery));
         ImGui.SameLine();
-        if (ImGui.Button("读取怪物")) debugResult = debugDataService.FindMonsters(debugQuery);
+        if (ImGui.Button("读取怪物")) SetDebugResult(debugDataService.FindMonsters(debugQuery));
         ImGui.SameLine();
-        if (ImGui.Button("读取副本")) debugResult = debugDataService.FindDuties(debugQuery);
+        if (ImGui.Button("读取副本")) SetDebugResult(debugDataService.FindDuties(debugQuery));
+    }
+
+    private void SetDebugResult(string result)
+    {
+        debugResult = result;
+        ImGui.SetClipboardText(result);
     }
 }

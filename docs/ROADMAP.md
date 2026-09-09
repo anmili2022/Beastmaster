@@ -11,10 +11,11 @@
 - 英文命令：`/beastmaster`
 - GitHub 仓库：`anmili2022/Beastmaster`
 - 自定义仓库：`https://raw.githubusercontent.com/anmili2022/Beastmaster/main/repo.json`
+- Dalamud API 文档：`https://dalamud.dev/api/`
 
 ## 当前状态
 
-插件已进入公开发布阶段，基础功能全部完成。最新版本 `0.1.7.0`，标题栏动态显示版本号。
+插件已进入公开发布阶段，基础功能全部完成。最新版本 `0.1.8.0`，标题栏动态显示版本号。
 
 ### 已完成功能
 
@@ -34,6 +35,7 @@
 - 飞行导航自动上坐骑，8 秒超时或战斗中降级为步行
 - 停止导航按钮
 - "按地图排序"黄色复选框（当前地图优先）
+- "按等级排序"复选框，区间等级按最低等级排序
 - "隐藏已捕获魔兽"复选框
 - **WIKI** 链接按钮，跳转 `ff14.huijiwiki.com/wiki/魔兽图鉴`
 - **等级** 列，数据来源于wiki
@@ -41,6 +43,7 @@
 **快捷指令**
 
 - "魔兽图鉴"按钮：通过 UIModule 执行 `/魔兽图鉴`（不使用 ICommandManager）
+- 驯兽师魔兽体型按钮：`/beastpetsize all small`、`medium`、`large`
 
 **自动记录**
 
@@ -57,10 +60,12 @@
 - 捕获后按驯兽师连击释放碎击斩、碎咬斧、裂盾劈
 - 悬浮窗显示「自动捕获中...」或「自动攻击中...」以及下一个技能
 - 悬浮窗「尝试捕获」关闭后只执行 1→2→3 连击
+- 左侧独立「自动输出」栏目管理自动输出总开关
+- 悬浮窗右键打开设置页面
 
 **配置**
 
-- Version 6 结构：HideCapturedBeasts、AutoCompleteCatalogFromChat、AutoCaptureEnabled、AutoCaptureTryCapture
+- Version 7 结构：HideCapturedBeasts、SortCatalogByLevel、AutoCompleteCatalogFromChat、AutoCaptureEnabled、AutoCaptureTryCapture
 - 按角色（ContentId）独立保存图鉴进度
 - 角色键优先使用 ContentId 十进制字符串，回退使用 Name@World
 
@@ -91,7 +96,7 @@
 | 33 | 长须豹 | 180 | 30 | `X=-359.599, Y=60.528, Z=-348.505` |
 | 36 | 树精 | 148 | 4 | `X=332.173, Y=-1.287, Z=-344.140` |
 | 39 | 魔界花 | 148 | 4 | `X=-427.656, Y=49.000, Z=33.517` |
-| 40 | 幽灵 | 134 | 15 | `X=-58.393, Y=27.135, Z=-119.884` |
+| 40 | 妖魂 | 134 | 15 | `X=-57.661, Y=34.287, Z=-84.685` |
 
 **DEBUG 页面**
 
@@ -100,6 +105,8 @@
 - 当前所有任务状态采集（运行时 ID、Sequence、Flags、Variables）
 - 当前角色和位置信息
 - 「读取自动捕获 ID」输出技能 Action、捕获状态 Status 和当前目标状态
+- 「读取驯兽师量谱原始数据」只读输出 JobGauges 地址附近 64 字节，不写入内存
+- 所有 DEBUG 读取按钮自动复制结果到剪贴板
 
 **发布流程**
 
@@ -182,6 +189,7 @@ Beastmaster/
 
 ## 工程约束
 
+- 使用卫月官方 Dalamud API 文档（`https://dalamud.dev/api/`）核对插件服务、客户端接口和 API 版本变化
 - 不修改或依赖 `E:\git\Phantom` 的运行时配置
 - `Beastmaster` 使用独立程序集、命令、配置和版本号
 - 静态资料、角色状态、追踪服务和 UI 绘制分开

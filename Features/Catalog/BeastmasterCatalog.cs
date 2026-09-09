@@ -69,7 +69,7 @@ public static class BeastmasterCatalog
         new(37, "灵蚁", BeastmasterCatalogLocationType.Duty, "流沙迷宫樵鸣洞", 0, null, null, "38", 0, null, null, null, 12),
         new(38, "奇美拉", BeastmasterCatalogLocationType.Duty, "流沙迷宫樵鸣洞", 0, null, null, "38", 0, null, null, null, 12),
         new(39, "魔界花", BeastmasterCatalogLocationType.Field, "黑衣森林中央林区", 148, 13.5f, 22.3f, "31", 4, -427.656f, 49f, 33.517f),
-        new(40, "幽灵", BeastmasterCatalogLocationType.Field, "中拉诺西亚", 134, 20.3f, 19.6f, "7", 15, -58.393f, 27.135f, -119.884f),
+        new(40, "妖魂", BeastmasterCatalogLocationType.Field, "中拉诺西亚", 134, 20.3f, 19.6f, "7", 15, -57.661f, 34.287f, -84.685f),
         new(41, "蝾螈", BeastmasterCatalogLocationType.Field, "黑衣森林中央林区", 148, 26.5f, 18.9f, "6", 4),
         new(42, "眼镜蛇", BeastmasterCatalogLocationType.Field, "摩杜纳", 156, 26.3f, 12.9f, "45", 14),
         new(43, "海德拉", BeastmasterCatalogLocationType.Duty, "海德拉讨伐战", 0, null, null, "50", 0, null, null, null, 75),
