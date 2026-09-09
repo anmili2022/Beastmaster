@@ -12,6 +12,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint BeastmasterClassJobId = 43;
     private const uint BeastmasterUltimateActionId = 47093;
     private const uint BeastmasterReleaseBaseActionId = 44890;
+    private const uint WhistleOneActionId = 44881;
+    private const uint WhistleTwoActionId = 44892;
+    private const uint WhistleThreeActionId = 44894;
+    private const uint FinalStrikeActionId = 44891;
     private readonly BeastmasterConfiguration configuration;
     private readonly uint smashActionId;
     private readonly uint biteActionId;
@@ -27,6 +31,9 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private DateTime pendingCooperationUntilUtc = DateTime.MinValue;
     private DateTime nextReleaseAttemptUtc = DateTime.MinValue;
     private bool reportedMissingData;
+    private int whistleRotationStage = -1;
+    private bool whistleRotationWaitingForCooldown;
+    private DateTime whistleRotationNextActionUtc = DateTime.MinValue;
 
     public string StatusText { get; private set; } = "等待当前目标";
 
@@ -45,6 +52,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     public string CaptureState { get; private set; } = "未开始";
 
     public string ManualActionStatus { get; private set; } = "未执行";
+
+    public string WhistleRotationStatus { get; private set; } = "未开启";
 
     public BeastmasterAutoCaptureService(BeastmasterConfiguration configuration)
     {
@@ -188,7 +197,14 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             TargetStatus = "无有效目标";
             TargetHpPercent = 0f;
             ResetCaptureState();
+            ResetWhistleRotation("自动输出未启用");
             return;
+        }
+
+        if (!configuration.WhistleRotationEnabled
+            && (whistleRotationStage >= 0 || whistleRotationWaitingForCooldown))
+        {
+            ResetWhistleRotation("未开启");
         }
 
         var now = DateTime.UtcNow;
@@ -261,11 +277,32 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        if (DalamudApi.TargetManager.Target is not IBattleChara target
-            || target.ObjectKind != ObjectKind.BattleNpc
-            || !target.IsTargetable
-            || target.IsDead
-            || target.CurrentHp == 0)
+        var target = DalamudApi.TargetManager.Target as IBattleChara;
+        if (target is not null
+            && (target.ObjectKind != ObjectKind.BattleNpc
+                || !target.IsTargetable
+                || target.IsDead
+                || target.CurrentHp == 0))
+        {
+            target = null;
+        }
+
+        var actionManager = ActionManager.Instance();
+        if (actionManager == null)
+        {
+            StatusText = "等待动作系统";
+            NextActionReason = "ActionManager 不可用";
+            return;
+        }
+
+        // 暂时禁用兽笛循环连招入口，保留实现以便后续恢复。
+        // if ((configuration.WhistleRotationEnabled || whistleRotationWaitingForCooldown || whistleRotationStage >= 0)
+        //     && TryRunWhistleRotation(actionManager, target, now))
+        // {
+        //     return;
+        // }
+
+        if (target is null)
         {
             StatusText = "等待当前敌对目标";
             NextActionName = "-";
@@ -283,14 +320,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             capturePendingUntilUtc = DateTime.MinValue;
             CaptureState = "未开始";
             ResetCooperationState();
-        }
-
-        var actionManager = ActionManager.Instance();
-        if (actionManager == null)
-        {
-            StatusText = "等待动作系统";
-            NextActionReason = "ActionManager 不可用";
-            return;
         }
 
         var hasOwnCapture = target.StatusList.Any(status =>
@@ -477,6 +506,132 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         nextReleaseAttemptUtc = now.AddMilliseconds(500);
         nextActionUtc = now.AddMilliseconds(700);
         return true;
+    }
+
+    private unsafe bool TryRunWhistleRotation(ActionManager* actionManager, IBattleChara? target, DateTime now)
+    {
+        if (whistleRotationWaitingForCooldown)
+        {
+            var cooldownStatus = actionManager->GetActionStatus(ActionType.Action, WhistleOneActionId, 0);
+            if (cooldownStatus != 0)
+            {
+                WhistleRotationStatus = $"已完成，等待兽笛1冷却（状态码 {cooldownStatus}）";
+                NextActionName = GetActionName(WhistleOneActionId);
+                NextActionReason = "兽笛1冷却完成后才能再次开启";
+                if (configuration.WhistleRotationEnabled)
+                {
+                    configuration.WhistleRotationEnabled = false;
+                    configuration.Save();
+                }
+
+                return true;
+            }
+
+            whistleRotationWaitingForCooldown = false;
+            WhistleRotationStatus = "兽笛1已就绪，可开启连招";
+        }
+
+        if (whistleRotationStage < 0)
+        {
+            if (!configuration.WhistleRotationEnabled)
+            {
+                WhistleRotationStatus = "未开启";
+                return false;
+            }
+
+            if (DalamudApi.Condition[ConditionFlag.InCombat])
+            {
+                WhistleRotationStatus = "等待脱离战斗后启动";
+                NextActionName = GetActionName(WhistleOneActionId);
+                NextActionReason = "兽笛1只能在未进入战斗时启动";
+                return true;
+            }
+
+            var whistleStatus = actionManager->GetActionStatus(ActionType.Action, WhistleOneActionId, 0);
+            if (whistleStatus != 0)
+            {
+                WhistleRotationStatus = $"等待兽笛1可用（状态码 {whistleStatus}）";
+                NextActionName = GetActionName(WhistleOneActionId);
+                NextActionReason = "连招启动需要兽笛1可用";
+                return true;
+            }
+
+            whistleRotationStage = 0;
+            WhistleRotationStatus = "连招进行中";
+        }
+
+        if (now < whistleRotationNextActionUtc)
+        {
+            return true;
+        }
+
+        var actionId = whistleRotationStage switch
+        {
+            0 => WhistleOneActionId,
+            1 => BeastmasterReleaseBaseActionId,
+            2 => FinalStrikeActionId,
+            3 => WhistleTwoActionId,
+            4 => BeastmasterReleaseBaseActionId,
+            5 => FinalStrikeActionId,
+            6 => WhistleThreeActionId,
+            7 => BeastmasterReleaseBaseActionId,
+            _ => 0u,
+        };
+        var requiresTarget = actionId is not (WhistleOneActionId or WhistleTwoActionId or WhistleThreeActionId);
+        if (requiresTarget && target is null)
+        {
+            WhistleRotationStatus = "等待有效目标后继续";
+            NextActionName = GetActionName(actionId);
+            NextActionReason = "释放和最后一击需要当前目标";
+            return true;
+        }
+
+        var targetId = actionId is WhistleOneActionId or WhistleTwoActionId or WhistleThreeActionId
+            ? 0UL
+            : target!.GameObjectId;
+        var adjustedActionId = actionId == BeastmasterReleaseBaseActionId
+            ? actionManager->GetAdjustedActionId(BeastmasterReleaseBaseActionId)
+            : actionId;
+        if (adjustedActionId == 0)
+        {
+            WhistleRotationStatus = "等待释放技能运行时 ID";
+            NextActionName = GetActionName(BeastmasterReleaseBaseActionId);
+            NextActionReason = "无法取得当前魔兽的释放技能 ID";
+            return true;
+        }
+
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, adjustedActionId, targetId);
+        NextActionName = GetActionName(adjustedActionId);
+        NextActionReason = actionStatus == 0 ? "兽笛循环连招" : $"技能暂不可用（状态码 {actionStatus}）";
+        if (actionStatus != 0 || !actionManager->UseAction(ActionType.Action, adjustedActionId, targetId))
+        {
+            WhistleRotationStatus = $"连招等待：{GetActionName(adjustedActionId)}";
+            whistleRotationNextActionUtc = now.AddMilliseconds(250);
+            return true;
+        }
+
+        StatusText = "兽笛循环连招中...";
+        whistleRotationNextActionUtc = now.AddMilliseconds(actionId == BeastmasterReleaseBaseActionId ? 700 : 350);
+        if (whistleRotationStage == 7)
+        {
+            configuration.WhistleRotationEnabled = false;
+            configuration.Save();
+            whistleRotationStage = -1;
+            whistleRotationWaitingForCooldown = true;
+            WhistleRotationStatus = "连招完成，等待兽笛1冷却";
+            return true;
+        }
+
+        whistleRotationStage++;
+        return true;
+    }
+
+    private void ResetWhistleRotation(string reason)
+    {
+        whistleRotationStage = -1;
+        whistleRotationWaitingForCooldown = false;
+        whistleRotationNextActionUtc = DateTime.MinValue;
+        WhistleRotationStatus = reason;
     }
 
     private void ResetCooperationState()

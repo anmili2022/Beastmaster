@@ -96,10 +96,12 @@
 - 自动输出增加统一 Action 可用性结果和失败原因
 - 高级技能支持手动大招；御兽协作（黄豆）和兽灵协作（蓝豆）互斥，协作流程自动包含大招
 - 高级技能开启后，当前魔兽释放技能通过运行时调整 ID 和 Action 状态判断，冷却中回退基础技能
+- 兽笛循环连招设计已记录但当前暂时禁用：一号兽笛→释放→最后一击→二号兽笛→释放→最后一击→三号兽笛→释放；完成后等待一号兽笛冷却
 
 **配置**
 
 - Version 8 结构：HideCapturedBeasts、SortCatalogByLevel、AutoCompleteCatalogFromChat、AutoCaptureEnabled、AutoCaptureTryCapture、CaptureHpThreshold、ShowGaugeInOverlay（详细模式）、AdvancedActionsEnabled、BeastHeartCooperationEnabled、BeastSoulCooperationEnabled
+- 配置中保留 `WhistleRotationEnabled` 字段，但兽笛循环连招当前未开放，运行入口和 UI 均已暂时禁用
 - 捕获血量阈值 `CaptureHpThreshold` 持久化保存，范围 1%~100%
 - 按角色（ContentId）独立保存图鉴进度
 - 角色键优先使用 ContentId 十进制字符串，回退使用 Name@World

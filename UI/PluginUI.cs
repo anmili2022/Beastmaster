@@ -25,6 +25,7 @@ public sealed class PluginUI
     private readonly BeastmasterNavigationService navigationService;
     private readonly BeastmasterDebugDataService debugDataService;
     private readonly BeastmasterAutoCaptureService autoCaptureService;
+    private readonly BeastmasterCatalogSyncService catalogSyncService;
     private string debugQuery = "驯兽";
     private string debugResult = "点击按钮读取客户端资料。";
     private DateTime nextQuestStatusRefreshUtc = DateTime.MinValue;
@@ -42,7 +43,8 @@ public sealed class PluginUI
         BeastmasterQuestService questService,
         BeastmasterNavigationService navigationService,
         BeastmasterDebugDataService debugDataService,
-        BeastmasterAutoCaptureService autoCaptureService)
+        BeastmasterAutoCaptureService autoCaptureService,
+        BeastmasterCatalogSyncService catalogSyncService)
     {
         this.configuration = configuration;
         this.progressService = progressService;
@@ -50,6 +52,7 @@ public sealed class PluginUI
         this.navigationService = navigationService;
         this.debugDataService = debugDataService;
         this.autoCaptureService = autoCaptureService;
+        this.catalogSyncService = catalogSyncService;
     }
 
     public void OpenMainWindow()
@@ -278,8 +281,9 @@ public sealed class PluginUI
     {
         var threshold = Math.Clamp(configuration.CaptureHpThreshold, 1f, 100f);
         ImGui.SetNextItemWidth(120f);
-        if (ImGui.SliderFloat("##overlay-capture-threshold", ref threshold, 1f, 100f, $"{threshold:0}%"))
+        if (ImGui.InputFloat("##overlay-capture-threshold", ref threshold, 1f, 5f, "%.0f%%"))
         {
+            threshold = Math.Clamp(threshold, 1f, 100f);
             configuration.CaptureHpThreshold = threshold;
             configuration.Save();
         }
@@ -798,6 +802,13 @@ public sealed class PluginUI
         }
 
         ImGui.TextDisabled("捕获成功时自动记录，也可按当前角色手动修改完成状态。");
+        if (ImGui.Button("同步当前角色已解锁魔兽"))
+        {
+            catalogSyncService.RequestSync();
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled(catalogSyncService.Status);
         ImGui.Separator();
 
         var entries = BeastmasterCatalog.Entries;
@@ -1092,6 +1103,22 @@ public sealed class PluginUI
             configuration.Save();
         }
 
+        // 暂时隐藏兽笛循环连招入口，保留实现以便后续恢复。
+        // var whistleRotationEnabled = configuration.WhistleRotationEnabled;
+        // if (ImGui.Checkbox("兽笛循环连招", ref whistleRotationEnabled))
+        // {
+        //     configuration.WhistleRotationEnabled = whistleRotationEnabled;
+        //     configuration.Save();
+        // }
+        // if (ImGui.IsItemHovered())
+        // {
+        //     ImGui.BeginTooltip();
+        //     ImGui.TextUnformatted("兽笛1（非战斗）→释放→最后一击→兽笛2→释放→最后一击→兽笛3→释放");
+        //     ImGui.TextDisabled("完成后自动关闭，并等待兽笛1冷却结束。");
+        //     ImGui.EndTooltip();
+        // }
+        // ImGui.TextDisabled($"状态：{autoCaptureService.WhistleRotationStatus}");
+
         ImGui.Unindent();
     }
 
@@ -1099,8 +1126,9 @@ public sealed class PluginUI
     {
         var threshold = Math.Clamp(configuration.CaptureHpThreshold, 1f, 100f);
         ImGui.SetNextItemWidth(180f);
-        if (ImGui.SliderFloat("捕获血量阈值", ref threshold, 1f, 100f, "%.0f%%"))
+        if (ImGui.InputFloat("捕获血量阈值", ref threshold, 1f, 5f, "%.0f%%"))
         {
+            threshold = Math.Clamp(threshold, 1f, 100f);
             configuration.CaptureHpThreshold = threshold;
             configuration.Save();
         }
@@ -1353,6 +1381,11 @@ public sealed class PluginUI
         if (ImGui.Button("读取魔兽属性映射"))
         {
             SetDebugResult(debugDataService.FindBeastmasterAttributes());
+        }
+
+        if (ImGui.Button("探测魔兽图鉴客户端数据"))
+        {
+            SetDebugResult(debugDataService.GetBeastmasterCatalogProbe());
         }
 
         if (ImGui.Button("读取推荐装备物品 ID"))

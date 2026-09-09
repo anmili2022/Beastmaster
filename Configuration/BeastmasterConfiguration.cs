@@ -28,6 +28,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool BeastHeartCooperationEnabled { get; set; }
     public bool BeastSoulCooperationEnabled { get; set; }
     public bool AutoReleaseEnabled { get; set; } = true;
+    public bool WhistleRotationEnabled { get; set; }
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
         = new(StringComparer.Ordinal);
 

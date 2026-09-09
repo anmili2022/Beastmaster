@@ -95,6 +95,50 @@ public sealed class BeastmasterProgressService
         }
     }
 
+    public int ReplaceCatalogProgress(IReadOnlySet<int> unlockedNumbers)
+    {
+        var characterKey = CurrentCharacterKey;
+        if (characterKey.Length == 0)
+        {
+            return 0;
+        }
+
+        if (!configuration.ProgressByCharacter.TryGetValue(characterKey, out var progress))
+        {
+            progress = new BeastmasterCharacterProgress();
+            configuration.ProgressByCharacter[characterKey] = progress;
+        }
+
+        var changed = 0;
+        foreach (var entry in BeastmasterCatalog.Entries)
+        {
+            var shouldBeCompleted = unlockedNumbers.Contains(entry.Number);
+            var isCompleted = progress.CompletedObjectives.Contains(entry.Key);
+            if (shouldBeCompleted == isCompleted)
+            {
+                continue;
+            }
+
+            if (shouldBeCompleted)
+            {
+                progress.CompletedObjectives.Add(entry.Key);
+            }
+            else
+            {
+                progress.CompletedObjectives.Remove(entry.Key);
+            }
+
+            changed++;
+        }
+
+        if (changed > 0)
+        {
+            configuration.Save();
+        }
+
+        return changed;
+    }
+
     public int GetCompletedCount(BeastmasterStage stage)
         => stage.Objectives.Count(objective => IsCompleted(objective.Key));
 }

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Text;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using Dalamud.Game.NativeWrapper;
 
 namespace Beastmaster;
 
@@ -308,6 +309,65 @@ public sealed class BeastmasterDebugDataService
             builder.AppendLine($"图鉴 {entry.Number:00} | {entry.Name} | DataId={dataId}");
             builder.AppendLine($"  大招 ActionId={ultimateId} | {GetActionName(ultimate)} | IconId={iconId} | 属性={attribute}");
             builder.AppendLine($"  释放 ActionId={releaseId} | {GetActionName(release)}");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public string GetBeastmasterCatalogProbe()
+    {
+        var builder = new StringBuilder()
+            .AppendLine("类型: 魔兽图鉴客户端探针")
+            .AppendLine("模式: 只读，不打开窗口、不触发回调、不写入游戏数据")
+            .AppendLine("说明: 仅检查当前已存在的候选原生 Addon；需要先在游戏中打开相关图鉴页面。")
+            .AppendLine();
+
+        var addonNames = new[] { "MonsterNote", "MobHunt", "MinionNotebook" };
+        foreach (var addonName in addonNames)
+        {
+            try
+            {
+                var addon = DalamudApi.GameGui.GetAddonByName(addonName);
+                builder.AppendLine($"Addon={addonName}");
+                if (addon.IsNull)
+                {
+                    builder.AppendLine("  状态: 不存在");
+                    continue;
+                }
+
+                builder.AppendLine($"  Address=0x{addon.Address.ToInt64():X}");
+                builder.AppendLine($"  Name={addon.Name}");
+                builder.AppendLine($"  Id={addon.Id} | ParentId={addon.ParentId} | HostId={addon.HostId}");
+                builder.AppendLine($"  Ready={addon.IsReady} | Visible={addon.IsVisible}");
+                builder.AppendLine($"  AtkValuesCount={addon.AtkValuesCount}");
+
+                if (!addon.IsReady)
+                {
+                    continue;
+                }
+
+                var index = 0;
+                foreach (var value in addon.AtkValues)
+                {
+                    string renderedValue;
+                    try
+                    {
+                        renderedValue = value.GetValue()?.ToString() ?? "<null>";
+                    }
+                    catch (Exception ex)
+                    {
+                        renderedValue = $"<读取失败: {ex.GetType().Name}>";
+                    }
+
+                    builder.AppendLine($"  Value[{index++}] Type={value.ValueType} Value={renderedValue}");
+                }
+            }
+            catch (Exception ex)
+            {
+                builder.AppendLine($"  读取失败: {ex.GetType().Name}: {ex.Message}");
+            }
+
+            builder.AppendLine();
         }
 
         return builder.ToString().TrimEnd();

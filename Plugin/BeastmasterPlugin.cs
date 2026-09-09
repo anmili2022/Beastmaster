@@ -11,6 +11,7 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
     private readonly BeastmasterNavigationService navigationService;
     private readonly BeastmasterCatalogChatTracker catalogChatTracker;
     private readonly BeastmasterAutoCaptureService autoCaptureService;
+    private readonly BeastmasterCatalogSyncService catalogSyncService;
 
     public string Name => "Beastmaster";
 
@@ -24,12 +25,14 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
             ?? new BeastmasterConfiguration();
         Configuration.Initialize(pluginInterface);
         var progressService = new BeastmasterProgressService(Configuration);
+        catalogSyncService = new BeastmasterCatalogSyncService(progressService);
+        catalogSyncService.Start();
         var questService = new BeastmasterQuestService();
         var debugDataService = new BeastmasterDebugDataService();
         navigationService = new BeastmasterNavigationService(pluginInterface, Configuration);
         catalogChatTracker = new BeastmasterCatalogChatTracker(Configuration, progressService);
         autoCaptureService = new BeastmasterAutoCaptureService(Configuration);
-        ui = new PluginUI(Configuration, progressService, questService, navigationService, debugDataService, autoCaptureService);
+        ui = new PluginUI(Configuration, progressService, questService, navigationService, debugDataService, autoCaptureService, catalogSyncService);
 
         DalamudApi.Commands.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -56,6 +59,7 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         DalamudApi.Commands.RemoveHandler(ChineseCommandName);
         catalogChatTracker.Dispose();
         autoCaptureService.Dispose();
+        catalogSyncService.Dispose();
         navigationService.Dispose();
         Configuration.Save();
     }
