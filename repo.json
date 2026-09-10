@@ -5,7 +5,7 @@
     "Description": "追踪驯兽师任务链和魔兽图鉴收集进度，支持捕获消息自动记录、任务与图鉴目标导航，并可配合 vnavmesh 和 Lifestream 完成同地图移动及跨地图传送。命令：/驯兽师 输出，可在自动输出与暂停状态之间切换。",
     "InternalName": "Beastmaster",
     "IconUrl": "https://raw.githubusercontent.com/anmili2022/Beastmaster/main/images/icon.png?v=2",
-    "AssemblyVersion": "0.1.16.0",
+    "AssemblyVersion": "0.1.17.0",
     "RepoUrl": "https://github.com/anmili2022/Beastmaster",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 15,
@@ -16,9 +16,9 @@
     ],
     "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkInstall": "https://github.com/anmili2022/Beastmaster/releases/download/0.1.16.0/Beastmaster.zip",
-    "DownloadLinkTesting": "https://github.com/anmili2022/Beastmaster/releases/download/0.1.16.0/Beastmaster.zip",
-    "DownloadLinkUpdate": "https://github.com/anmili2022/Beastmaster/releases/download/0.1.16.0/Beastmaster.zip",
-    "LastUpdated": "2026-09-10T15:12:35Z"
+    "DownloadLinkInstall": "https://github.com/anmili2022/Beastmaster/releases/download/0.1.17.0/Beastmaster.zip",
+    "DownloadLinkTesting": "https://github.com/anmili2022/Beastmaster/releases/download/0.1.17.0/Beastmaster.zip",
+    "DownloadLinkUpdate": "https://github.com/anmili2022/Beastmaster/releases/download/0.1.17.0/Beastmaster.zip",
+    "LastUpdated": "2026-09-10T16:00:28Z"
   }
 ]
