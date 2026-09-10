@@ -9,7 +9,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 10;
+    public int Version { get; set; } = 12;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -23,6 +23,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool AutoCaptureEnabled { get; set; }
     public bool AutoOutputPaused { get; set; }
     public bool AutoCaptureTryCapture { get; set; } = true;
+    public bool BasicComboEnabled { get; set; } = true;
     public float CaptureHpThreshold { get; set; } = 80f;
     public bool ShowGaugeInOverlay { get; set; }
     public bool AdvancedActionsEnabled { get; set; }
@@ -30,6 +31,9 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool BeastSoulCooperationEnabled { get; set; }
     public bool PhysicalThirdFormEnabled { get; set; }
     public bool MagicalThirdFormEnabled { get; set; }
+    public bool AutoWhistleEnabled { get; set; }
+    public bool AutoFinalStrikeEnabled { get; set; }
+    public float AutoFinalStrikeHpThreshold { get; set; } = 20f;
     public bool AutoReleaseEnabled { get; set; } = true;
     public bool WhistleRotationEnabled { get; set; }
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
@@ -67,6 +71,33 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             Version = 10;
             Save();
         }
+
+        if (Version < 11)
+        {
+            if (!AdvancedActionsEnabled)
+            {
+                BeastHeartCooperationEnabled = false;
+                BeastSoulCooperationEnabled = false;
+                PhysicalThirdFormEnabled = false;
+                MagicalThirdFormEnabled = false;
+                AutoReleaseEnabled = false;
+            }
+
+            BasicComboEnabled = true;
+            AutoWhistleEnabled = false;
+            Version = 11;
+            Save();
+        }
+
+        if (Version < 12)
+        {
+            AutoFinalStrikeEnabled = false;
+            AutoFinalStrikeHpThreshold = 20f;
+            Version = 12;
+            Save();
+        }
+
+        AutoFinalStrikeHpThreshold = Math.Clamp(AutoFinalStrikeHpThreshold, 1f, 100f);
     }
 
     public void Save()

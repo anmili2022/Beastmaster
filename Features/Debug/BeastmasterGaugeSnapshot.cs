@@ -24,6 +24,8 @@ public sealed class BeastmasterGaugeSnapshot
         nint address,
         uint summonDataId = 0,
         string summonName = "",
+        uint summonCurrentHp = 0,
+        uint summonMaxHp = 0,
         bool hasWhiteStatus = false,
         bool hasPurpleStatus = false)
     {
@@ -33,6 +35,8 @@ public sealed class BeastmasterGaugeSnapshot
         Address = address;
         SummonDataId = summonDataId;
         SummonName = summonName;
+        SummonCurrentHp = summonCurrentHp;
+        SummonMaxHp = summonMaxHp;
         HasWhiteStatus = hasWhiteStatus;
         HasPurpleStatus = hasPurpleStatus;
     }
@@ -48,6 +52,12 @@ public sealed class BeastmasterGaugeSnapshot
     public uint SummonDataId { get; }
 
     public string SummonName { get; }
+
+    public uint SummonCurrentHp { get; }
+
+    public uint SummonMaxHp { get; }
+
+    public float SummonHpPercent => SummonMaxHp == 0 ? 0f : SummonCurrentHp * 100f / SummonMaxHp;
 
     public bool HasWhiteStatus { get; }
 
@@ -96,7 +106,7 @@ public sealed class BeastmasterGaugeSnapshot
             bytes[index] = source[index];
         }
 
-        var (summonDataId, summonName) = FindSummon();
+        var (summonDataId, summonName, summonCurrentHp, summonMaxHp) = FindSummon();
         var player = DalamudApi.ObjectTable.LocalPlayer;
         var hasWhiteStatus = player?.StatusList.Any(status => status.StatusId == WhiteStatusId) == true;
         var hasPurpleStatus = player?.StatusList.Any(status => status.StatusId == PurpleStatusId) == true;
@@ -107,6 +117,8 @@ public sealed class BeastmasterGaugeSnapshot
             address,
             summonDataId,
             summonName,
+            summonCurrentHp,
+            summonMaxHp,
             hasWhiteStatus,
             hasPurpleStatus);
     }
@@ -121,12 +133,12 @@ public sealed class BeastmasterGaugeSnapshot
     public static BeastmasterGaugeSnapshot Unavailable(string status)
         => new(false, status, Array.Empty<byte>(), nint.Zero);
 
-    private static (uint DataId, string Name) FindSummon()
+    private static (uint DataId, string Name, uint CurrentHp, uint MaxHp) FindSummon()
     {
         var player = DalamudApi.ObjectTable.LocalPlayer;
         if (player == null)
         {
-            return (0, "");
+            return (0, "", 0, 0);
         }
 
         foreach (var obj in DalamudApi.ObjectTable)
@@ -139,11 +151,11 @@ public sealed class BeastmasterGaugeSnapshot
                 && character.CurrentHp > 0
                 && summon.BaseId is >= 18916 and <= 18965)
             {
-                return (summon.BaseId, summon.Name.TextValue);
+                return (summon.BaseId, summon.Name.TextValue, character.CurrentHp, character.MaxHp);
             }
         }
 
-        return (0, "");
+        return (0, "", 0, 0);
     }
 
     private byte GetByte(int offset)

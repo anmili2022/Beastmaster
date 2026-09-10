@@ -151,6 +151,11 @@ public sealed class PluginUI
         }
         ImGui.SameLine();
         DrawCompactCaptureHpThreshold();
+        var basicComboEnabled = autoCaptureService.BasicComboEnabled;
+        if (ImGui.Checkbox("基础技能（1→2→3）", ref basicComboEnabled))
+        {
+            autoCaptureService.SetBasicComboEnabled(basicComboEnabled);
+        }
         DrawAdvancedActionToggles();
 
         if (ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows)
@@ -320,12 +325,6 @@ public sealed class PluginUI
     {
         if (!ImGui.CollapsingHeader("高级技能候选##BeastmasterAdvancedCandidates"))
         {
-            return;
-        }
-
-        if (!configuration.AdvancedActionsEnabled)
-        {
-            ImGui.TextDisabled("高级技能总开关已关闭，当前只保留资源。");
             return;
         }
 
@@ -1089,29 +1088,9 @@ public sealed class PluginUI
         DrawBeastmasterGaugeGuide();
     }
 
-    private string GetAdvancedActionModeText()
-        => !configuration.AdvancedActionsEnabled
-            ? "关闭，保留资源"
-            : configuration.BeastHeartCooperationEnabled
-                ? "御兽协作（黄豆）"
-                : configuration.BeastSoulCooperationEnabled
-                     ? "兽灵协作（蓝豆）"
-                    : configuration.PhysicalThirdFormEnabled
-                        ? "三式（物理）"
-                        : configuration.MagicalThirdFormEnabled
-                            ? "三式（魔法）"
-                            : "总开关已开，但未选择高级模式";
-
     private void DrawAdvancedActionToggles()
     {
-        var advancedEnabled = configuration.AdvancedActionsEnabled;
-        if (ImGui.Checkbox("高级技能", ref advancedEnabled))
-        {
-            configuration.AdvancedActionsEnabled = advancedEnabled;
-            configuration.Save();
-        }
-
-        if (!configuration.AdvancedActionsEnabled)
+        if (!ImGui.CollapsingHeader("高级技能##BeastmasterAdvancedActions"))
         {
             return;
         }
@@ -1159,6 +1138,40 @@ public sealed class PluginUI
                 configuration.PhysicalThirdFormEnabled = false;
             }
             configuration.Save();
+        }
+
+        var autoWhistleEnabled = configuration.AutoWhistleEnabled;
+        if (ImGui.Checkbox("自动兽笛", ref autoWhistleEnabled))
+        {
+            configuration.AutoWhistleEnabled = autoWhistleEnabled;
+            configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("当前没有魔兽时，按兽笛 1→2→3 使用首个可用技能；释放后等待 1 秒确认召唤。");
+        }
+
+        var autoFinalStrikeEnabled = configuration.AutoFinalStrikeEnabled;
+        if (ImGui.Checkbox("自动最后一击", ref autoFinalStrikeEnabled))
+        {
+            configuration.AutoFinalStrikeEnabled = autoFinalStrikeEnabled;
+            configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("宝宝血量低于设定百分比时，对当前敌对目标使用最后一击。");
+        }
+
+        var finalStrikeThreshold = Math.Clamp(configuration.AutoFinalStrikeHpThreshold, 1f, 100f);
+        ImGui.SetNextItemWidth(150f);
+        if (ImGui.InputFloat("##AutoFinalStrikeThreshold", ref finalStrikeThreshold, 1f, 5f, "%.0f%%"))
+        {
+            configuration.AutoFinalStrikeHpThreshold = Math.Clamp(finalStrikeThreshold, 1f, 100f);
+            configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("自动最后一击的宝宝血量阈值，范围 1%~100%。");
         }
 
         var releaseEnabled = configuration.AutoReleaseEnabled;
@@ -1234,6 +1247,9 @@ public sealed class PluginUI
             DrawGaugeRow("当前兽笛", snapshot.WhistleIndex is >= 1 and <= 3
                 ? $"{snapshot.WhistleIndex} 号"
                 : "未召唤", "当前兽笛类型");
+            DrawGaugeRow("宝宝血量", snapshot.SummonMaxHp > 0
+                ? $"{snapshot.SummonHpPercent:0.#}%（{snapshot.SummonCurrentHp}/{snapshot.SummonMaxHp}）"
+                : "不可用", "自动最后一击依据");
             DrawGaugeRow("御兽之心", $"{snapshot.BeastHeartStacks} 层", "协作量谱");
             DrawGaugeRow("兽灵之心", $"{snapshot.BeastSoulStacks} 层", "协作量谱");
             DrawGaugeRow("黑白状态", GetBlackWhiteStatus(snapshot), "生息 4599 / 死灭 4600");
@@ -1410,9 +1426,6 @@ public sealed class PluginUI
                     break;
                 case nameof(configuration.ShowNavigationLogs):
                     configuration.ShowNavigationLogs = value;
-                    break;
-                case nameof(configuration.AdvancedActionsEnabled):
-                    configuration.AdvancedActionsEnabled = value;
                     break;
                 case nameof(configuration.BeastHeartCooperationEnabled):
                     configuration.BeastHeartCooperationEnabled = value;

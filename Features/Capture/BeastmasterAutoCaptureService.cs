@@ -35,6 +35,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private uint pendingCooperationStatusId;
     private DateTime pendingCooperationUntilUtc = DateTime.MinValue;
     private DateTime nextReleaseAttemptUtc = DateTime.MinValue;
+    private uint pendingWhistleActionId;
+    private DateTime pendingWhistleUntilUtc = DateTime.MinValue;
+    private DateTime nextWhistleAttemptUtc = DateTime.MinValue;
+    private DateTime nextFinalStrikeAttemptUtc = DateTime.MinValue;
     private bool reportedMissingData;
     private int whistleRotationStage = -1;
     private bool whistleRotationWaitingForCooldown;
@@ -80,6 +84,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     public bool TryCapture => configuration.AutoCaptureTryCapture;
 
+    public bool BasicComboEnabled => configuration.BasicComboEnabled;
+
     public void SetEnabled(bool enabled)
     {
         configuration.AutoCaptureEnabled = enabled;
@@ -92,8 +98,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         {
             nextActionUtc = DateTime.MinValue;
             nextReleaseAttemptUtc = DateTime.MinValue;
+            nextFinalStrikeAttemptUtc = DateTime.MinValue;
             ResetCaptureState();
             ResetCooperationState();
+            ResetAutoWhistle();
             DalamudApi.ChatGui.Print("[驯兽师助手] 自动捕获已关闭。");
         }
     }
@@ -101,6 +109,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     public void SetTryCapture(bool enabled)
     {
         configuration.AutoCaptureTryCapture = enabled;
+        configuration.Save();
+    }
+
+    public void SetBasicComboEnabled(bool enabled)
+    {
+        configuration.BasicComboEnabled = enabled;
         configuration.Save();
     }
 
@@ -112,19 +126,15 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         {
             nextActionUtc = DateTime.MinValue;
             nextReleaseAttemptUtc = DateTime.MinValue;
+            nextFinalStrikeAttemptUtc = DateTime.MinValue;
             ResetCaptureState();
             ResetCooperationState();
+            ResetAutoWhistle();
         }
     }
 
     public unsafe bool TryUseUltimate()
     {
-        if (!configuration.AdvancedActionsEnabled)
-        {
-            ManualActionStatus = "高级技能总开关已关闭";
-            return false;
-        }
-
         var gauge = BeastmasterGaugeSnapshot.Read();
         var entry = gauge.SummonEntry;
         if (!gauge.Available || entry == null)
@@ -222,6 +232,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             TargetHpPercent = 0f;
             ResetCaptureState();
             ResetWhistleRotation("自动输出未启用");
+            ResetAutoWhistle();
             return;
         }
 
@@ -233,6 +244,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             AdvancedActionStatus = "暂停中";
             ResetCaptureState();
             ResetCooperationState();
+            ResetAutoWhistle();
             return;
         }
 
@@ -330,6 +342,17 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
+        if (!configuration.AutoWhistleEnabled && pendingWhistleActionId != 0)
+        {
+            ResetAutoWhistle();
+        }
+
+        if (configuration.AutoWhistleEnabled
+            && TryUseAutoWhistle(actionManager, gauge, now))
+        {
+            return;
+        }
+
         // 暂时禁用兽笛循环连招入口，保留实现以便后续恢复。
         // if ((configuration.WhistleRotationEnabled || whistleRotationWaitingForCooldown || whistleRotationStage >= 0)
         //     && TryRunWhistleRotation(actionManager, target, now))
@@ -397,8 +420,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         uint actionId;
 
-        if (configuration.AdvancedActionsEnabled
-            && (configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
+        if ((configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
             && pendingCooperationActionId != 0)
         {
             actionId = pendingCooperationActionId;
@@ -417,23 +439,26 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        if (configuration.AdvancedActionsEnabled
-            && (configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
+        if (configuration.AutoFinalStrikeEnabled
+            && TryUseFinalStrike(actionManager, gauge, target.GameObjectId, now))
+        {
+            return;
+        }
+
+        if ((configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
             && TryUseThirdFormAction(actionManager, gauge, target.GameObjectId, now))
         {
             return;
         }
 
-        if (configuration.AdvancedActionsEnabled
-            && configuration.AutoReleaseEnabled
+        if (configuration.AutoReleaseEnabled
             && gauge.SummonEntry != null
             && TryUseReleaseAction(actionManager, target.GameObjectId, now))
         {
             return;
         }
 
-        if (configuration.AdvancedActionsEnabled
-            && (configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
+        if ((configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
             && TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var cooperationActionId, out var cooperationFollowUpId, out var cooperationStatusId))
         {
             actionId = cooperationActionId;
@@ -458,13 +483,25 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        actionId = configuration.AutoCaptureTryCapture && !hasOwnCapture && canCapture
-            ? captureActionId
-            : actionManager->Combo.Timer > 0f && actionManager->Combo.Action == biteActionId && player.Level >= 12
+        if (configuration.AutoCaptureTryCapture && !hasOwnCapture && canCapture)
+        {
+            actionId = captureActionId;
+        }
+        else if (!configuration.BasicComboEnabled)
+        {
+            StatusText = "等待可用技能";
+            NextActionName = "-";
+            NextActionReason = "基础技能（1→2→3）已关闭";
+            return;
+        }
+        else
+        {
+            actionId = actionManager->Combo.Timer > 0f && actionManager->Combo.Action == biteActionId && player.Level >= 12
                 ? shieldActionId
                 : actionManager->Combo.Timer > 0f && actionManager->Combo.Action == smashActionId && player.Level >= 2
                     ? biteActionId
                     : smashActionId;
+        }
 
         StatusText = configuration.AutoCaptureTryCapture ? "自动捕获中..." : "自动攻击中...";
         NextActionName = GetActionName(actionId);
@@ -546,6 +583,41 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         return true;
     }
 
+    private unsafe bool TryUseFinalStrike(
+        ActionManager* actionManager,
+        BeastmasterGaugeSnapshot gauge,
+        ulong targetId,
+        DateTime now)
+    {
+        if (gauge.SummonDataId == 0
+            || gauge.SummonMaxHp == 0
+            || gauge.SummonHpPercent >= configuration.AutoFinalStrikeHpThreshold
+            || now < nextFinalStrikeAttemptUtc)
+        {
+            return false;
+        }
+
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, FinalStrikeActionId, targetId);
+        if (actionStatus != 0)
+        {
+            nextFinalStrikeAttemptUtc = now.AddMilliseconds(250);
+            return false;
+        }
+
+        StatusText = "自动最后一击...";
+        NextActionName = GetActionName(FinalStrikeActionId);
+        NextActionReason = $"宝宝血量 {gauge.SummonHpPercent:0.#}% 低于阈值 {configuration.AutoFinalStrikeHpThreshold:0.#}%";
+        if (!actionManager->UseAction(ActionType.Action, FinalStrikeActionId, targetId))
+        {
+            nextFinalStrikeAttemptUtc = now.AddMilliseconds(500);
+            return false;
+        }
+
+        nextFinalStrikeAttemptUtc = now.AddMilliseconds(700);
+        nextActionUtc = now.AddMilliseconds(700);
+        return true;
+    }
+
     private unsafe bool TryUseThirdFormAction(
         ActionManager* actionManager,
         BeastmasterGaugeSnapshot gauge,
@@ -589,6 +661,70 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         nextActionUtc = now.AddMilliseconds(700);
         return true;
+    }
+
+    private unsafe bool TryUseAutoWhistle(
+        ActionManager* actionManager,
+        BeastmasterGaugeSnapshot gauge,
+        DateTime now)
+    {
+        var hasSummon = gauge.SummonEntry != null || gauge.WhistleIndex is >= 1 and <= 3;
+        if (hasSummon)
+        {
+            ResetAutoWhistle();
+            return false;
+        }
+
+        if (pendingWhistleActionId != 0 && now < pendingWhistleUntilUtc)
+        {
+            StatusText = "等待魔兽召唤...";
+            NextActionName = GetActionName(pendingWhistleActionId);
+            NextActionReason = "兽笛请求已发送，等待召唤确认";
+            return true;
+        }
+
+        if (pendingWhistleActionId != 0)
+        {
+            pendingWhistleActionId = 0;
+            pendingWhistleUntilUtc = DateTime.MinValue;
+        }
+
+        if (now < nextWhistleAttemptUtc)
+        {
+            return false;
+        }
+
+        foreach (var actionId in new[] { WhistleOneActionId, WhistleTwoActionId, WhistleThreeActionId })
+        {
+            var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, 0);
+            if (actionStatus != 0)
+            {
+                continue;
+            }
+
+            StatusText = "自动召唤魔兽...";
+            NextActionName = GetActionName(actionId);
+            NextActionReason = "当前没有魔兽，按 1→2→3 选择首个可用兽笛";
+            if (!actionManager->UseAction(ActionType.Action, actionId, 0))
+            {
+                nextWhistleAttemptUtc = now.AddMilliseconds(250);
+                return false;
+            }
+
+            pendingWhistleActionId = actionId;
+            pendingWhistleUntilUtc = now.AddSeconds(1);
+            return true;
+        }
+
+        nextWhistleAttemptUtc = now.AddMilliseconds(500);
+        return false;
+    }
+
+    private void ResetAutoWhistle()
+    {
+        pendingWhistleActionId = 0;
+        pendingWhistleUntilUtc = DateTime.MinValue;
+        nextWhistleAttemptUtc = DateTime.MinValue;
     }
 
     private unsafe bool TryRunWhistleRotation(ActionManager* actionManager, IBattleChara? target, DateTime now)
@@ -797,11 +933,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     private string GetAdvancedActionStatus(BeastmasterGaugeSnapshot gauge)
     {
-        if (!configuration.AdvancedActionsEnabled)
-        {
-            return "高级技能已关闭，保留资源";
-        }
-
         var entry = gauge.SummonEntry;
         if (entry == null)
         {
@@ -818,7 +949,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return $"{(configuration.PhysicalThirdFormEnabled ? "三式（物理）" : "三式（魔法）")}已开启";
         }
 
-        return "高级技能已开启，但协作技和三式均关闭";
+        if (configuration.AutoWhistleEnabled || configuration.AutoFinalStrikeEnabled || configuration.AutoReleaseEnabled)
+        {
+            return $"自动兽笛{(configuration.AutoWhistleEnabled ? "开启" : "关闭")}，最后一击{(configuration.AutoFinalStrikeEnabled ? "开启" : "关闭")}，释放{(configuration.AutoReleaseEnabled ? "开启" : "关闭")}";
+        }
+
+        return "高级技能均已关闭";
     }
 
     private static uint ResolveAction(string name)
