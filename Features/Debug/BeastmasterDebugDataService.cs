@@ -60,6 +60,56 @@ public sealed class BeastmasterDebugDataService
             DalamudApi.DataManager.GetExcelSheet<ClassJob>()
                 .Select(row => (row.RowId, Name: row.Name.ExtractText())));
 
+    public string FindTerritories(string query)
+    {
+        query = query.Trim();
+        if (query.Length == 0)
+        {
+            return "区域 TerritoryType\n请输入 TerritoryType ID 或区域名称关键词。";
+        }
+
+        var territories = DalamudApi.DataManager.GetExcelSheet<TerritoryType>();
+        var matches = uint.TryParse(query, out var territoryTypeId)
+            ? territories.Where(row => row.RowId == territoryTypeId).ToArray()
+            : territories
+                .Where(row => row.RowId != 0
+                    && row.PlaceName.Value.Name.ExtractText().Contains(query, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(row => row.RowId)
+                .Take(ResultLimit + 1)
+                .ToArray();
+        var duties = DalamudApi.DataManager.GetExcelSheet<ContentFinderCondition>();
+        var builder = new StringBuilder()
+            .AppendLine("类型: 区域 TerritoryType")
+            .AppendLine($"查询: {query}");
+
+        foreach (var territory in matches.Take(ResultLimit))
+        {
+            var name = territory.PlaceName.Value.Name.ExtractText();
+            builder.AppendLine($"TerritoryType={territory.RowId} | 区域={name} | Map.RowId={territory.Map.RowId}");
+
+            var dutyMatches = duties
+                .Where(duty => duty.RowId != 0 && duty.TerritoryType.RowId == territory.RowId)
+                .Select(duty => $"{duty.RowId} {duty.Name.ExtractText()}")
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToArray();
+            if (dutyMatches.Length > 0)
+            {
+                builder.AppendLine($"  副本: {string.Join(" | ", dutyMatches)}");
+            }
+        }
+
+        if (matches.Length == 0)
+        {
+            builder.AppendLine("未找到匹配内容。");
+        }
+        else if (matches.Length > ResultLimit)
+        {
+            builder.AppendLine($"结果超过 {ResultLimit} 条，请使用更具体的关键词。");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
     public string FindQuests(string query)
     {
         query = query.Trim();

@@ -17,7 +17,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint PurplePhysicalThirdFormActionId = 44930;
     private const uint WhiteMagicalThirdFormActionId = 44933;
     private const uint PurpleMagicalThirdFormActionId = 44932;
-    private const ushort BeastArenaTerritoryType = 1339;
+    private const ushort BeastArenaFirstTerritoryType = 1339;
+    private const ushort BeastArenaLastTerritoryType = 1343;
     private const uint ProtectedStatusId = 2413;
     private const uint EnmityUpStatusId = 5586;
     private const uint AttentionActionId = 46751;
@@ -349,7 +350,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         if (pendingCooperationActionId == 0
-            && DalamudApi.ClientState.TerritoryType == BeastArenaTerritoryType
+            && DalamudApi.ClientState.TerritoryType is >= BeastArenaFirstTerritoryType and <= BeastArenaLastTerritoryType
             && TryUseArenaMaintenanceAction(actionManager, player, now))
         {
             return;

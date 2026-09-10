@@ -1130,6 +1130,10 @@ public sealed class PluginUI
             }
             configuration.Save();
         }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("万象流转·物理");
+        }
 
         var magicalThirdFormEnabled = configuration.MagicalThirdFormEnabled;
         if (ImGui.Checkbox("三式（魔法）", ref magicalThirdFormEnabled))
@@ -1140,6 +1144,10 @@ public sealed class PluginUI
                 configuration.PhysicalThirdFormEnabled = false;
             }
             configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("万象流转·魔法");
         }
 
         var autoWhistleEnabled = configuration.AutoWhistleEnabled;
@@ -1218,7 +1226,7 @@ public sealed class PluginUI
         }
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip("仅在区域 1339 生效；自身没有被保护（2413）时使用吸引注意（46751）。");
+            ImGui.SetTooltip("仅在区域 1339~1343 生效；自身没有被保护（2413）时使用吸引注意（46751）。");
         }
 
         var keepProvokeEnabled = configuration.ArenaKeepProvokeEnabled;
@@ -1229,7 +1237,7 @@ public sealed class PluginUI
         }
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip("仅在区域 1339 生效；自身没有仇恨上升（5586）时使用挑衅（46750）。");
+            ImGui.SetTooltip("仅在区域 1339~1343 生效；自身没有仇恨上升（5586）时使用挑衅（46750）。");
         }
         ImGui.Unindent();
     }
@@ -1517,7 +1525,7 @@ public sealed class PluginUI
         DrawDebugActionRow(
             "##DebugSearchType",
             ref debugSearchType,
-            "职业\0任务\0物品\0NPC\0怪物\0副本\0",
+            "职业\0区域\0任务\0物品\0NPC\0怪物\0副本\0",
             "查询##DebugSearch",
             RunDebugSearch);
 
@@ -1569,11 +1577,12 @@ public sealed class PluginUI
         SetDebugResult(debugSearchType switch
         {
             0 => debugDataService.FindClassJobs(debugQuery),
-            1 => debugDataService.FindQuests(debugQuery),
-            2 => debugDataService.FindItems(debugQuery),
-            3 => debugDataService.FindNpcs(debugQuery),
-            4 => debugDataService.FindMonsters(debugQuery),
-            5 => debugDataService.FindDuties(debugQuery),
+            1 => debugDataService.FindTerritories(debugQuery),
+            2 => debugDataService.FindQuests(debugQuery),
+            3 => debugDataService.FindItems(debugQuery),
+            4 => debugDataService.FindNpcs(debugQuery),
+            5 => debugDataService.FindMonsters(debugQuery),
+            6 => debugDataService.FindDuties(debugQuery),
             _ => "未知查询类型。",
         });
     }
