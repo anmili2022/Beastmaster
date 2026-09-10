@@ -1,3 +1,4 @@
+using Dalamud.Game.ClientState.Conditions;
 using Lumina.Excel.Sheets;
 using Dalamud.Game.ClientState.Objects.Types;
 using System.Globalization;
@@ -259,48 +260,32 @@ public sealed class BeastmasterDebugDataService
 
     public string FindAutoCaptureData()
     {
-        string[] actionNames = ["碎击斩", "碎咬斧", "裂盾劈", "捕获"];
+        uint[] actionIds = [44879, 44883, 44885, 44880];
         var actions = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>();
         var statuses = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Status>();
         var builder = new StringBuilder()
             .AppendLine("类型: 自动捕获技能与状态 ID")
             .AppendLine("技能 Action:");
 
-        foreach (var name in actionNames)
+        foreach (var actionId in actionIds)
         {
-            var matches = actions
-                .Where(action => action.RowId != 0
-                    && action.Name.ExtractText().Equals(name, StringComparison.Ordinal))
-                .OrderBy(action => action.RowId)
-                .ToArray();
-            if (matches.Length == 0)
+            if (!actions.TryGetRow(actionId, out var action))
             {
-                builder.AppendLine($"  {name}: 未找到");
+                builder.AppendLine($"  Action.RowId={actionId}: 未找到");
                 continue;
             }
 
-            foreach (var action in matches)
-            {
-                builder.AppendLine($"  {name}: Action.RowId={action.RowId} | ClassJob={action.ClassJob.RowId} | 等级={action.ClassJobLevel} | 射程={action.Range}");
-            }
+            builder.AppendLine($"  Action.RowId={action.RowId} | {action.Name.ExtractText()} | ClassJob={action.ClassJob.RowId} | 等级={action.ClassJobLevel} | 射程={action.Range}");
         }
 
         builder.AppendLine("状态 Status:");
-        var captureStatuses = statuses
-            .Where(status => status.RowId != 0
-                && status.Name.ExtractText().Equals("捕获", StringComparison.Ordinal))
-            .OrderBy(status => status.RowId)
-            .ToArray();
-        if (captureStatuses.Length == 0)
+        if (!statuses.TryGetRow(4626, out var captureStatus))
         {
-            builder.AppendLine("  捕获: 未找到");
+            builder.AppendLine("  Status.RowId=4626: 未找到");
         }
         else
         {
-            foreach (var status in captureStatuses)
-            {
-                builder.AppendLine($"  捕获: Status.RowId={status.RowId}");
-            }
+            builder.AppendLine($"  Status.RowId={captureStatus.RowId} | {captureStatus.Name.ExtractText()}");
         }
 
         builder.AppendLine("当前目标状态:");
@@ -807,12 +792,7 @@ public sealed class BeastmasterDebugDataService
             return "类型: 目标捕获判定\nActionManager 不可用。";
         }
 
-        var actions = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>();
-        var captureActionId = actions
-            ?.Where(a => a.RowId != 0 && a.Name.ExtractText().Equals("捕获", StringComparison.Ordinal))
-            .OrderBy(a => a.RowId)
-            .Select(a => a.RowId)
-            .FirstOrDefault() ?? 0;
+        var captureActionId = 44880u;
 
         var actionStatus = captureActionId != 0
             ? manager->GetActionStatus(ActionType.Action, captureActionId, target.GameObjectId)
@@ -850,6 +830,31 @@ public sealed class BeastmasterDebugDataService
             }
         }
 
+        return builder.ToString().TrimEnd();
+    }
+
+    public string GetAutoOutputConditionDebug()
+    {
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var builder = new StringBuilder()
+            .AppendLine("类型: 自动输出人物状态诊断")
+            .AppendLine($"已登录: {DalamudApi.ClientState.IsLoggedIn}")
+            .AppendLine($"角色已加载: {player != null}")
+            .AppendLine($"职业 ID: {DalamudApi.PlayerState.ClassJob.RowId}")
+            .AppendLine($"BetweenAreas: {DalamudApi.Condition[ConditionFlag.BetweenAreas]}")
+            .AppendLine($"Mounted: {DalamudApi.Condition[ConditionFlag.Mounted]}")
+            .AppendLine($"OccupiedInCutSceneEvent: {DalamudApi.Condition[ConditionFlag.OccupiedInCutSceneEvent]}")
+            .AppendLine($"InCombat: {DalamudApi.Condition[ConditionFlag.InCombat]}");
+
+        if (player == null)
+        {
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine($"角色 HP: {player.CurrentHp}/{player.MaxHp}")
+            .AppendLine($"角色读条: {player.IsCasting}")
+            .AppendLine($"角色对象类型: {player.ObjectKind}")
+            .AppendLine($"当前目标: {DalamudApi.TargetManager.Target?.Name.TextValue ?? "无"}");
         return builder.ToString().TrimEnd();
     }
 

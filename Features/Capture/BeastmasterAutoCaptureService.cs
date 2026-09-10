@@ -27,6 +27,11 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint WhistleTwoActionId = 44892;
     private const uint WhistleThreeActionId = 44894;
     private const uint FinalStrikeActionId = 44891;
+    private const uint SmashActionId = 44879;
+    private const uint BiteActionId = 44883;
+    private const uint ShieldActionId = 44885;
+    private const uint CaptureActionId = 44880;
+    private const uint CaptureStatusId = 4626;
     private readonly BeastmasterConfiguration configuration;
     private readonly uint smashActionId;
     private readonly uint biteActionId;
@@ -74,14 +79,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     public BeastmasterAutoCaptureService(BeastmasterConfiguration configuration)
     {
         this.configuration = configuration;
-        smashActionId = ResolveAction("碎击斩");
-        biteActionId = ResolveAction("碎咬斧");
-        shieldActionId = ResolveAction("裂盾劈");
-        captureActionId = ResolveAction("捕获");
-        captureStatusId = ResolveStatus("待捕获") is var pendingCaptureStatusId
-            && pendingCaptureStatusId != 0
-                ? pendingCaptureStatusId
-                : ResolveStatus("捕获");
+        // Action and status RowId are language-independent; names differ by client locale.
+        smashActionId = SmashActionId;
+        biteActionId = BiteActionId;
+        shieldActionId = ShieldActionId;
+        captureActionId = CaptureActionId;
+        captureStatusId = CaptureStatusId;
         DalamudApi.Framework.Update += OnFrameworkUpdate;
     }
 
@@ -284,13 +287,31 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         nextCheckUtc = now.AddMilliseconds(100);
-        if (now < nextActionUtc
-            || DalamudApi.Condition[ConditionFlag.BetweenAreas]
-            || DalamudApi.Condition[ConditionFlag.Mounted]
-            || DalamudApi.Condition[ConditionFlag.OccupiedInCutSceneEvent])
+        if (now < nextActionUtc)
         {
             StatusText = "等待可执行状态";
-            NextActionReason = "角色当前不可执行动作";
+            NextActionReason = "技能节流等待";
+            return;
+        }
+
+        if (DalamudApi.Condition[ConditionFlag.BetweenAreas])
+        {
+            StatusText = "等待可执行状态";
+            NextActionReason = "正在切图或传送";
+            return;
+        }
+
+        if (DalamudApi.Condition[ConditionFlag.Mounted])
+        {
+            StatusText = "等待可执行状态";
+            NextActionReason = "当前处于骑乘状态";
+            return;
+        }
+
+        if (DalamudApi.Condition[ConditionFlag.OccupiedInCutSceneEvent])
+        {
+            StatusText = "等待可执行状态";
+            NextActionReason = "剧情或特殊事件占用";
             return;
         }
 
@@ -315,7 +336,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         if (player.CurrentHp == 0 || player.IsCasting)
         {
             StatusText = "等待可执行状态";
-            NextActionReason = "角色死亡或正在读条";
+            NextActionReason = player.CurrentHp == 0 ? "角色已死亡" : "角色正在读条";
             return;
         }
 
@@ -733,7 +754,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 (false, false) => PurpleMagicalThirdFormActionId,
             };
             actionTargetId = targetId;
-            reason = $"{(gauge.HasWhiteStatus ? "白（生息）" : "黑/紫（死灭）")} + {(configuration.PhysicalThirdFormEnabled ? "三式（物理）" : "三式（魔法）")}";
+            reason = $"{(gauge.HasWhiteStatus ? "白（生息）" : "黑/紫（死灭）")} + {(configuration.PhysicalThirdFormEnabled ? "万象流转（物理）" : "万象流转（魔法）")}";
         }
         else
         {
@@ -1047,7 +1068,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
         {
-            return $"{(configuration.PhysicalThirdFormEnabled ? "三式（物理）" : "三式（魔法）")}已开启";
+            return $"{(configuration.PhysicalThirdFormEnabled ? "万象流转（物理）" : "万象流转（魔法）")}已开启";
         }
 
         if (configuration.AutoWhistleEnabled || configuration.AutoFinalStrikeEnabled || configuration.AutoReleaseEnabled)
@@ -1057,23 +1078,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         return "高级技能均已关闭";
     }
-
-    private static uint ResolveAction(string name)
-        => DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()
-            .Where(action => action.RowId != 0
-                && action.Name.ExtractText().Equals(name, StringComparison.Ordinal))
-            .OrderByDescending(action => action.ClassJob.RowId == BeastmasterClassJobId)
-            .ThenBy(action => action.RowId)
-            .Select(action => action.RowId)
-            .FirstOrDefault();
-
-    private static uint ResolveStatus(string name)
-        => DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Status>()
-            .Where(status => status.RowId != 0
-                && status.Name.ExtractText().Equals(name, StringComparison.Ordinal))
-            .OrderBy(status => status.RowId)
-            .Select(status => status.RowId)
-            .FirstOrDefault();
 
     private static string GetActionName(uint actionId)
         => DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()

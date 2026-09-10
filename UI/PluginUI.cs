@@ -387,7 +387,7 @@ public sealed class PluginUI
                 : $"资源不足：技力 {gaugeSnapshot.Tp}/100，兽力 {gaugeSnapshot.BeastPower}/100");
         var thirdFormEnabled = configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled;
         DrawAdvancedCandidate(
-            configuration.PhysicalThirdFormEnabled ? "三式（物理）" : "三式（魔法）",
+            configuration.PhysicalThirdFormEnabled ? "万象流转（物理）" : "万象流转（魔法）",
             GetThirdFormActionName(gaugeSnapshot),
             thirdFormEnabled,
             GetThirdFormReason(gaugeSnapshot));
@@ -874,6 +874,15 @@ public sealed class PluginUI
             catalogSyncService.RequestSync();
         }
 
+        if (!string.IsNullOrWhiteSpace(catalogSyncService.Diagnostic))
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("复制同步诊断"))
+            {
+                ImGui.SetClipboardText(catalogSyncService.Diagnostic);
+            }
+        }
+
         ImGui.SameLine();
         ImGui.TextDisabled(catalogSyncService.Status);
         ImGui.Separator();
@@ -909,10 +918,10 @@ public sealed class PluginUI
         }
 
         var currentTerritory = DalamudApi.ClientState.TerritoryType;
-        var currentMapName = DalamudApi.DataManager.GetExcelSheet<TerritoryType>()
+        var currentMapRowId = DalamudApi.DataManager.GetExcelSheet<TerritoryType>()
             .TryGetRow(currentTerritory, out var currentTerritoryRow)
-            ? currentTerritoryRow.Map.Value.PlaceName.Value.Name.ExtractText()
-            : string.Empty;
+            ? currentTerritoryRow.Map.RowId
+            : (ushort)0;
         var completedCount = entries.Count(entry => progressService.IsCompleted(entry.Key));
         ImGui.ProgressBar((float)completedCount / entries.Count, new Vector2(-1f, 0f), $"{completedCount}/{entries.Count}");
 
@@ -942,7 +951,8 @@ public sealed class PluginUI
         if (configuration.SortCatalogByLocation)
         {
             sortedEntries = displayedEntries
-                .OrderBy(entry => !entry.Location.Equals(currentMapName, StringComparison.Ordinal))
+                .OrderBy(entry => !(entry.TerritoryType == currentTerritory
+                    && (entry.MapRowId == 0 || entry.MapRowId == currentMapRowId)))
                 .ThenBy(entry => entry.Location, StringComparer.Ordinal)
                 .ThenBy(entry => configuration.SortCatalogByLevel ? GetCatalogMinimumLevel(entry.Level) : int.MaxValue)
                 .ThenBy(entry => entry.Number);
@@ -1169,7 +1179,7 @@ public sealed class PluginUI
         }
 
         var physicalThirdFormEnabled = configuration.PhysicalThirdFormEnabled;
-        if (ImGui.Checkbox("三式（物理）", ref physicalThirdFormEnabled))
+        if (ImGui.Checkbox("万象流转（物理）", ref physicalThirdFormEnabled))
         {
             configuration.PhysicalThirdFormEnabled = physicalThirdFormEnabled;
             if (physicalThirdFormEnabled)
@@ -1184,7 +1194,7 @@ public sealed class PluginUI
         }
 
         var magicalThirdFormEnabled = configuration.MagicalThirdFormEnabled;
-        if (ImGui.Checkbox("三式（魔法）", ref magicalThirdFormEnabled))
+        if (ImGui.Checkbox("万象流转（魔法）", ref magicalThirdFormEnabled))
         {
             configuration.MagicalThirdFormEnabled = magicalThirdFormEnabled;
             if (magicalThirdFormEnabled)
@@ -1591,7 +1601,7 @@ public sealed class PluginUI
         DrawDebugActionRow(
             "##DebugCurrentStateType",
             ref debugCurrentStateType,
-            "驯兽师量谱原始数据\0当前目标状态\0当前连击状态\0协力验证数据\0当前角色\0当前位置\0目标捕获判定\0",
+            "驯兽师量谱原始数据\0当前目标状态\0当前连击状态\0协力验证数据\0当前角色\0当前位置\0目标捕获判定\0自动输出状态\0",
             "读取##DebugCurrentState",
             RunDebugCurrentState);
 
@@ -1662,6 +1672,7 @@ public sealed class PluginUI
             4 => debugDataService.GetCharacter(),
             5 => debugDataService.GetLocation(),
             6 => debugDataService.GetCaptureCheckDebug(),
+            7 => debugDataService.GetAutoOutputConditionDebug(),
             _ => "未知当前状态类型。",
         });
     }

@@ -102,16 +102,20 @@ public sealed class BeastmasterNavigationService : IDisposable
         }
 
         var maps = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Map>();
-        var map = maps
-            .FirstOrDefault(candidate => candidate.TerritoryType.RowId != 0
+        var map = entry.MapRowId != 0
+            ? maps.FirstOrDefault(candidate => candidate.RowId == entry.MapRowId
+                && candidate.TerritoryType.RowId != 0
                 && candidate.SizeFactor > 0
-                && (entry.TerritoryType == 0 || candidate.TerritoryType.RowId == entry.TerritoryType)
-                && (entry.MapRowId == 0 || candidate.RowId == entry.MapRowId)
-                && candidate.PlaceName.Value.Name.ExtractText().Equals(entry.Location, StringComparison.Ordinal));
+                && (entry.TerritoryType == 0 || candidate.TerritoryType.RowId == entry.TerritoryType))
+            : default;
 
-        // Some client map rows use a different territory/map pairing than the
-        // catalog source. Fall back to the localized map name and retain the
-        // catalog identifiers for navigation and map flags.
+        if (map.RowId == 0 && entry.TerritoryType != 0)
+        {
+            map = maps.FirstOrDefault(candidate => candidate.TerritoryType.RowId == entry.TerritoryType
+                && candidate.SizeFactor > 0);
+        }
+
+        // Names are localized, so only use them when catalog identifiers are absent.
         if (map.RowId == 0)
         {
             map = maps.FirstOrDefault(candidate => candidate.TerritoryType.RowId != 0

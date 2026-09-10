@@ -37,6 +37,7 @@ public sealed unsafe class BeastmasterCatalogSyncService
 
     public string Status => status;
     public bool IsScanning => scanning;
+    public string Diagnostic { get; private set; } = string.Empty;
 
     public void RequestSync()
     {
@@ -52,6 +53,7 @@ public sealed unsafe class BeastmasterCatalogSyncService
         nextActionAt = 0;
         scanStartedAt = Environment.TickCount64;
         expectedCapturedTotal = null;
+        Diagnostic = string.Empty;
         scanning = true;
         status = "正在读取当前角色的魔兽图鉴…";
     }
@@ -165,11 +167,13 @@ public sealed unsafe class BeastmasterCatalogSyncService
         }
         catch (InvalidOperationException ex) when (Environment.TickCount64 - scanStartedAt < 15000)
         {
+            Diagnostic = ex.Message;
             nextActionAt = Environment.TickCount64 + 250;
             status = $"等待图鉴数据刷新…{ex.Message}";
         }
         catch (Exception ex)
         {
+            Diagnostic = ex.Message;
             Stop($"同步失败，未修改进度：{ex.Message}", clearStates: true);
         }
     }
@@ -232,13 +236,21 @@ public sealed unsafe class BeastmasterCatalogSyncService
             var number = 1 + page * EntriesPerPage + index;
             var captured = capturedValue.TypeCode() == 2 && capturedValue.Bool;
 
+            var expectedIcon = captured ? CapturedIconBase + (uint)number : MissingIcon;
+            var expectedText = number.ToString(CultureInfo.InvariantCulture);
             if (numberValue.TypeCode() != 5 || numberValue.UInt != number
-                || ReadString(textValue) != number.ToString(CultureInfo.InvariantCulture)
+                || ReadString(textValue) != expectedText
                 || capturedValue.TypeCode() != 2
                 || iconValue.TypeCode() != 5
-                || iconValue.UInt != (captured ? CapturedIconBase + (uint)number : MissingIcon))
+                || iconValue.UInt != expectedIcon)
             {
-                throw new InvalidOperationException($"图鉴第 {number:00} 项结构未通过校验。");
+                throw new InvalidOperationException(
+                    $"图鉴第 {number:00} 项结构未通过校验。\n"
+                    + $"页码={page}，AtkValuesCount={addon->AtkValuesCount}\n"
+                    + $"编号字段：{FormatValue(numberValue)}，期望 TypeCode=5 UInt={number}\n"
+                    + $"捕获字段：{FormatValue(capturedValue)}，期望 TypeCode=2 Bool={captured}\n"
+                    + $"图标字段：{FormatValue(iconValue)}，期望 TypeCode=5 UInt={expectedIcon}\n"
+                    + $"文本字段：{FormatValue(textValue)}，期望文本={expectedText}");
             }
 
             result.Add((number, captured));
@@ -296,6 +308,12 @@ public sealed unsafe class BeastmasterCatalogSyncService
         }
 
         return value.String.ToString() ?? string.Empty;
+    }
+
+    private static unsafe string FormatValue(AtkValue value)
+    {
+        var text = ReadString(value).Replace("\r", "\\r").Replace("\n", "\\n");
+        return $"Type=0x{(int)value.Type:X}, TypeCode={value.TypeCode()}, UInt={value.UInt}, Int={value.Int}, Bool={value.Bool}, String=\"{text}\"";
     }
 
     private void Stop(string message, bool clearStates)
