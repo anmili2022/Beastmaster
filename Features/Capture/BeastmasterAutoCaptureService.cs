@@ -12,6 +12,11 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint BeastmasterClassJobId = 43;
     private const uint BeastmasterUltimateActionId = 47093;
     private const uint BeastmasterReleaseBaseActionId = 44890;
+    private const uint DrumActionId = 44905;
+    private const uint WhitePhysicalThirdFormActionId = 44931;
+    private const uint PurplePhysicalThirdFormActionId = 44930;
+    private const uint WhiteMagicalThirdFormActionId = 44933;
+    private const uint PurpleMagicalThirdFormActionId = 44932;
     private const uint WhistleOneActionId = 44881;
     private const uint WhistleTwoActionId = 44892;
     private const uint WhistleThreeActionId = 44894;
@@ -71,6 +76,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     public bool IsEnabled => configuration.AutoCaptureEnabled;
 
+    public bool IsPaused => configuration.AutoOutputPaused;
+
     public bool TryCapture => configuration.AutoCaptureTryCapture;
 
     public void SetEnabled(bool enabled)
@@ -83,6 +90,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
         else
         {
+            nextActionUtc = DateTime.MinValue;
+            nextReleaseAttemptUtc = DateTime.MinValue;
+            ResetCaptureState();
+            ResetCooperationState();
             DalamudApi.ChatGui.Print("[驯兽师助手] 自动捕获已关闭。");
         }
     }
@@ -91,6 +102,19 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     {
         configuration.AutoCaptureTryCapture = enabled;
         configuration.Save();
+    }
+
+    public void SetPaused(bool paused)
+    {
+        configuration.AutoOutputPaused = paused;
+        configuration.Save();
+        if (paused)
+        {
+            nextActionUtc = DateTime.MinValue;
+            nextReleaseAttemptUtc = DateTime.MinValue;
+            ResetCaptureState();
+            ResetCooperationState();
+        }
     }
 
     public unsafe bool TryUseUltimate()
@@ -198,6 +222,17 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             TargetHpPercent = 0f;
             ResetCaptureState();
             ResetWhistleRotation("自动输出未启用");
+            return;
+        }
+
+        if (configuration.AutoOutputPaused)
+        {
+            StatusText = "自动输出已暂停";
+            NextActionName = "-";
+            NextActionReason = "暂停开关已开启";
+            AdvancedActionStatus = "暂停中";
+            ResetCaptureState();
+            ResetCooperationState();
             return;
         }
 
@@ -383,6 +418,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         if (configuration.AdvancedActionsEnabled
+            && (configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
+            && TryUseThirdFormAction(actionManager, gauge, target.GameObjectId, now))
+        {
+            return;
+        }
+
+        if (configuration.AdvancedActionsEnabled
             && configuration.AutoReleaseEnabled
             && gauge.SummonEntry != null
             && TryUseReleaseAction(actionManager, target.GameObjectId, now))
@@ -436,7 +478,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                     ? "目标有他人施加的捕获状态，不影响自身捕获判断"
                     : "技能系统允许使用";
 
-        var availability = CheckActionAvailability(actionManager, actionId, target.GameObjectId);
+        var availability = BeastmasterActionHelper.GetAvailability(actionId, target.GameObjectId);
         NextActionReason = availability.Reason;
         if (!availability.CanUse && actionId != BeastmasterUltimateActionId)
         {
@@ -479,24 +521,20 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return false;
         }
 
-        var releaseActionId = actionManager->GetAdjustedActionId(BeastmasterReleaseBaseActionId);
-        if (releaseActionId == 0)
-        {
-            return false;
-        }
-
-        var releaseName = GetActionName(releaseActionId);
-        var actionStatus = actionManager->GetActionStatus(ActionType.Action, releaseActionId, targetId);
-        if (actionStatus != 0)
+        var availability = BeastmasterActionHelper.GetAvailability(
+            BeastmasterReleaseBaseActionId,
+            targetId,
+            useAdjustedActionId: true);
+        if (!availability.CanUse)
         {
             nextReleaseAttemptUtc = now.AddMilliseconds(500);
             return false;
         }
 
         StatusText = "自动释放魔兽技能...";
-        NextActionName = releaseName;
+        NextActionName = availability.ActionName;
         NextActionReason = "释放技能冷却完成";
-        if (!actionManager->UseAction(ActionType.Action, releaseActionId, targetId))
+        if (!actionManager->UseAction(ActionType.Action, availability.ActionId, targetId))
         {
             NextActionReason = "释放技能请求失败";
             nextReleaseAttemptUtc = now.AddSeconds(1);
@@ -504,6 +542,51 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         nextReleaseAttemptUtc = now.AddMilliseconds(500);
+        nextActionUtc = now.AddMilliseconds(700);
+        return true;
+    }
+
+    private unsafe bool TryUseThirdFormAction(
+        ActionManager* actionManager,
+        BeastmasterGaugeSnapshot gauge,
+        ulong targetId,
+        DateTime now)
+    {
+        uint actionId;
+        ulong actionTargetId;
+        string reason;
+        if (gauge.BeastHeartStacks >= 3 && (gauge.HasWhiteStatus || gauge.HasPurpleStatus))
+        {
+            actionId = DrumActionId;
+            actionTargetId = 0;
+            reason = $"御兽之心 {gauge.BeastHeartStacks} 层，进入三式流程";
+        }
+        else if (gauge.HasWhiteStatus || gauge.HasPurpleStatus)
+        {
+            actionId = (gauge.HasWhiteStatus, configuration.PhysicalThirdFormEnabled) switch
+            {
+                (true, true) => WhitePhysicalThirdFormActionId,
+                (true, false) => WhiteMagicalThirdFormActionId,
+                (false, true) => PurplePhysicalThirdFormActionId,
+                (false, false) => PurpleMagicalThirdFormActionId,
+            };
+            actionTargetId = targetId;
+            reason = $"{(gauge.HasWhiteStatus ? "白（生息）" : "黑/紫（死灭）")} + {(configuration.PhysicalThirdFormEnabled ? "三式（物理）" : "三式（魔法）")}";
+        }
+        else
+        {
+            return false;
+        }
+
+        StatusText = "自动三式中...";
+        NextActionName = GetActionName(actionId);
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, actionTargetId);
+        NextActionReason = actionStatus == 0 ? reason : $"{reason}，技能暂不可用（状态码 {actionStatus}）";
+        if (actionStatus != 0 || !actionManager->UseAction(ActionType.Action, actionId, actionTargetId))
+        {
+            return false;
+        }
+
         nextActionUtc = now.AddMilliseconds(700);
         return true;
     }
@@ -712,23 +795,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         return firstActionId != 0 && secondActionId != 0;
     }
 
-    private static unsafe BeastmasterActionAvailability CheckActionAvailability(
-        ActionManager* actionManager,
-        uint actionId,
-        ulong targetId)
-    {
-        if (actionId == 0)
-        {
-            return new(0, "-", false, "ActionId 无效");
-        }
-
-        var actionName = GetActionName(actionId);
-        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, targetId);
-        return actionStatus == 0
-            ? new(actionId, actionName, true, "技能系统允许使用")
-            : new(actionId, actionName, false, $"技能系统暂不可用（状态码 {actionStatus}）");
-    }
-
     private string GetAdvancedActionStatus(BeastmasterGaugeSnapshot gauge)
     {
         if (!configuration.AdvancedActionsEnabled)
@@ -747,7 +813,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return $"{(configuration.BeastHeartCooperationEnabled ? "御兽协作（黄豆）" : "兽灵协作（蓝豆）")}已开启";
         }
 
-        return "高级技能已开启，但大招和协作技均关闭";
+        if (configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
+        {
+            return $"{(configuration.PhysicalThirdFormEnabled ? "三式（物理）" : "三式（魔法）")}已开启";
+        }
+
+        return "高级技能已开启，但协作技和三式均关闭";
     }
 
     private static uint ResolveAction(string name)

@@ -78,6 +78,8 @@
 - 任务开始 NPC 导航复用飞行导航逻辑，支持自动上坐骑和步行回退
 - 悬浮窗显示当前魔兽、属性、技力、兽力、御兽之心、兽灵之心和决策原因
 - 悬浮窗可直接切换高级技能总开关、御兽协作（黄豆）和兽灵协作（蓝豆）
+- 悬浮窗和自动输出栏目可切换互斥的三式（物理）与三式（魔法）
+- 悬浮窗标题栏和自动输出栏目共享独立暂停状态，不关闭自动输出总开关
 - 悬浮窗可直接切换“释放”开关
 - 悬浮窗可直接调整捕获血量阈值，默认 80%
 - 自动输出栏目提供「详细模式」开关，默认关闭
@@ -96,11 +98,12 @@
 - 自动输出增加统一 Action 可用性结果和失败原因
 - 高级技能支持手动大招；御兽协作（黄豆）和兽灵协作（蓝豆）互斥，协作流程自动包含大招
 - 高级技能开启后，当前魔兽释放技能通过运行时调整 ID 和 Action 状态判断，冷却中回退基础技能
+- 三式仅在自身存在生息/死灭且御兽之心达到 3 层时使用鼓劲，再按客户端实测黑白映射选择物理或魔法终结技能
 - 兽笛循环连招设计已记录但当前暂时禁用：一号兽笛→释放→最后一击→二号兽笛→释放→最后一击→三号兽笛→释放；完成后等待一号兽笛冷却
 
 **配置**
 
-- Version 8 结构：HideCapturedBeasts、SortCatalogByLevel、AutoCompleteCatalogFromChat、AutoCaptureEnabled、AutoCaptureTryCapture、CaptureHpThreshold、ShowGaugeInOverlay（详细模式）、AdvancedActionsEnabled、BeastHeartCooperationEnabled、BeastSoulCooperationEnabled
+- Version 10 结构：增加 PhysicalThirdFormEnabled、MagicalThirdFormEnabled 和 AutoOutputPaused；两个三式模式互斥且默认关闭，暂停状态独立于自动输出总开关
 - 配置中保留 `WhistleRotationEnabled` 字段，但兽笛循环连招当前未开放，运行入口和 UI 均已暂时禁用
 - 捕获血量阈值 `CaptureHpThreshold` 持久化保存，范围 1%~100%
 - 按角色（ContentId）独立保存图鉴进度

@@ -14,6 +14,8 @@ public sealed class BeastmasterGaugeSnapshot
     private const int WhistleIndexOffset = 19;
     private const int BeastHeartOffset = 24;
     private const int TpOffset = 16;
+    private const uint WhiteStatusId = 4599;
+    private const uint PurpleStatusId = 4600;
 
     private BeastmasterGaugeSnapshot(
         bool available,
@@ -21,7 +23,9 @@ public sealed class BeastmasterGaugeSnapshot
         byte[] bytes,
         nint address,
         uint summonDataId = 0,
-        string summonName = "")
+        string summonName = "",
+        bool hasWhiteStatus = false,
+        bool hasPurpleStatus = false)
     {
         Available = available;
         Status = status;
@@ -29,6 +33,8 @@ public sealed class BeastmasterGaugeSnapshot
         Address = address;
         SummonDataId = summonDataId;
         SummonName = summonName;
+        HasWhiteStatus = hasWhiteStatus;
+        HasPurpleStatus = hasPurpleStatus;
     }
 
     public bool Available { get; }
@@ -42,6 +48,10 @@ public sealed class BeastmasterGaugeSnapshot
     public uint SummonDataId { get; }
 
     public string SummonName { get; }
+
+    public bool HasWhiteStatus { get; }
+
+    public bool HasPurpleStatus { get; }
 
     public byte Tp => GetByte(TpOffset);
 
@@ -87,7 +97,18 @@ public sealed class BeastmasterGaugeSnapshot
         }
 
         var (summonDataId, summonName) = FindSummon();
-        return new BeastmasterGaugeSnapshot(true, "读取正常", bytes, address, summonDataId, summonName);
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var hasWhiteStatus = player?.StatusList.Any(status => status.StatusId == WhiteStatusId) == true;
+        var hasPurpleStatus = player?.StatusList.Any(status => status.StatusId == PurpleStatusId) == true;
+        return new BeastmasterGaugeSnapshot(
+            true,
+            "读取正常",
+            bytes,
+            address,
+            summonDataId,
+            summonName,
+            hasWhiteStatus,
+            hasPurpleStatus);
     }
 
     public static BeastmasterGaugeSnapshot ReadRaw() => Read();

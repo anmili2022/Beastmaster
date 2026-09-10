@@ -478,6 +478,85 @@ public sealed class BeastmasterDebugDataService
             .TrimEnd();
     }
 
+    public unsafe string GetActionStatusDebug(uint actionId, bool useAdjustedActionId)
+    {
+        var manager = ActionManager.Instance();
+        if (manager == null)
+        {
+            return "类型: 技能状态\nActionManager 不可用。";
+        }
+
+        var target = DalamudApi.TargetManager.Target;
+        var targetId = target?.GameObjectId ?? 0xE0000000UL;
+        var availability = BeastmasterActionHelper.GetAvailability(actionId, targetId, useAdjustedActionId);
+        if (availability.ActionId == 0)
+        {
+            return new StringBuilder()
+                .AppendLine("类型: 技能状态")
+                .AppendLine($"输入 ActionId: {actionId}")
+                .AppendLine($"使用 GetAdjustedActionId: {(useAdjustedActionId ? "是" : "否")}")
+                .AppendLine($"技能: {availability.ActionName}")
+                .AppendLine("能否使用: 否")
+                .AppendLine($"判定: {availability.Reason}")
+                .ToString()
+                .TrimEnd();
+        }
+
+        var resolvedActionId = availability.ActionId;
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var targetDistance = player != null && target != null
+            ? Vector3.Distance(player.Position, target.Position)
+            : (float?)null;
+        var gauge = BeastmasterGaugeSnapshot.Read();
+        var summon = gauge.SummonEntry;
+
+        var recastTotal = 0f;
+        var recastElapsed = 0f;
+        var recastActive = false;
+        var recastRemaining = 0f;
+        var actionRange = 0f;
+        try
+        {
+            recastTotal = manager->GetRecastTime(ActionType.Action, resolvedActionId);
+            recastElapsed = manager->GetRecastTimeElapsed(ActionType.Action, resolvedActionId);
+            recastActive = manager->IsRecastTimerActive(ActionType.Action, resolvedActionId);
+            recastRemaining = recastActive ? Math.Max(0f, recastTotal - recastElapsed) : 0f;
+            actionRange = ActionManager.GetActionRange(resolvedActionId);
+        }
+        catch
+        {
+            return new StringBuilder()
+                .AppendLine("类型: 技能状态")
+                .AppendLine($"输入 ActionId: {actionId}")
+                .AppendLine($"使用 GetAdjustedActionId: {(useAdjustedActionId ? "是" : "否")}")
+                .AppendLine($"实际 ActionId: {resolvedActionId}")
+                .AppendLine($"技能: {availability.ActionName}")
+                .AppendLine("能否使用: 否")
+                .AppendLine("判定: 调用原生 API 时发生异常，ActionId 可能无法用于当前状态")
+                .ToString()
+                .TrimEnd();
+        }
+
+        return new StringBuilder()
+            .AppendLine("类型: 技能状态")
+            .AppendLine($"输入 ActionId: {actionId}")
+            .AppendLine($"使用 GetAdjustedActionId: {(useAdjustedActionId ? "是" : "否")}")
+            .AppendLine($"实际 ActionId: {resolvedActionId}")
+            .AppendLine($"技能: {availability.ActionName}")
+            .AppendLine($"能否使用: {(availability.CanUse ? "是" : "否")}")
+            .AppendLine($"判定: {availability.Reason}")
+            .AppendLine($"当前 CD: {recastRemaining:0.###}s / {recastTotal:0.###}s（已过 {recastElapsed:0.###}s）")
+            .AppendLine($"技能射程: {actionRange:0.###} yalms")
+            .AppendLine(targetDistance.HasValue
+                ? $"当前目标距离: {targetDistance.Value:0.###} yalms | {target!.Name.TextValue}"
+                : "当前目标距离: 无当前目标或本地角色")
+            .AppendLine(summon != null
+                ? $"当前魔兽: {summon.Name} | 图鉴 {summon.Number:00} | DataId={gauge.SummonDataId}"
+                : $"当前魔兽: {(string.IsNullOrWhiteSpace(gauge.SummonName) ? "未识别/未召唤" : gauge.SummonName)}")
+            .ToString()
+            .TrimEnd();
+    }
+
     public unsafe string GetCooperationValidationDebug()
     {
         var gauge = BeastmasterGaugeSnapshot.ReadRaw();
@@ -538,7 +617,7 @@ public sealed class BeastmasterDebugDataService
         }
         else
         {
-            foreach (var status in player.StatusList.Where(status => status.StatusId is >= 4595 and <= 4598))
+            foreach (var status in player.StatusList.Where(status => status.StatusId is >= 4595 and <= 4600))
             {
                 builder.AppendLine($"  StatusId={status.StatusId} | SourceId={status.SourceId} | 剩余={status.RemainingTime:0.0}s");
             }
@@ -649,6 +728,76 @@ public sealed class BeastmasterDebugDataService
         else if (truncated)
         {
             builder.AppendLine($"结果超过 {ResultLimit} 条，请使用更具体的关键词。");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string GetCaptureCheckDebug()
+    {
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            return "类型: 目标捕获判定\n角色未加载。";
+        }
+
+        if (player.ClassJob.RowId != 43)
+        {
+            return "类型: 目标捕获判定\n当前职业不是驯兽师。";
+        }
+
+        if (DalamudApi.TargetManager.Target is not IBattleChara target)
+        {
+            return "类型: 目标捕获判定\n当前未选择有效目标。";
+        }
+
+        var manager = ActionManager.Instance();
+        if (manager == null)
+        {
+            return "类型: 目标捕获判定\nActionManager 不可用。";
+        }
+
+        var actions = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>();
+        var captureActionId = actions
+            ?.Where(a => a.RowId != 0 && a.Name.ExtractText().Equals("捕获", StringComparison.Ordinal))
+            .OrderBy(a => a.RowId)
+            .Select(a => a.RowId)
+            .FirstOrDefault() ?? 0;
+
+        var actionStatus = captureActionId != 0
+            ? manager->GetActionStatus(ActionType.Action, captureActionId, target.GameObjectId)
+            : 0xFFFFFFFF;
+
+        var statuses = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Status>();
+        var hpPercent = target.MaxHp == 0
+            ? 100f
+            : target.CurrentHp * 100f / target.MaxHp;
+
+        var builder = new StringBuilder()
+            .AppendLine("类型: 目标捕获判定")
+            .AppendLine($"目标: {target.Name.TextValue} | BaseId={target.BaseId}")
+            .AppendLine($"HP: {target.CurrentHp}/{target.MaxHp} ({hpPercent:0.#}%)")
+            .AppendLine($"可选中: {target.IsTargetable} | 已死亡: {(target.IsDead || target.CurrentHp == 0)}")
+            .AppendLine($"捕获 ActionId: {(captureActionId != 0 ? captureActionId.ToString() : "未找到")}")
+            .AppendLine($"GetActionStatus 状态码: {(actionStatus == 0 ? "0（可用）" : actionStatus.ToString())}")
+            .AppendLine($"游戏判定能否捕获: {(actionStatus == 0 ? "可以" : "不可以")}")
+            .AppendLine()
+            .AppendLine("目标当前状态列表:");
+
+        if (!target.StatusList.Any())
+        {
+            builder.AppendLine("  （无状态）");
+        }
+        else
+        {
+            foreach (var s in target.StatusList.OrderBy(s => s.StatusId))
+            {
+                var statusName = statuses?.TryGetRow(s.StatusId, out var row) == true
+                    ? row.Name.ExtractText()
+                    : "";
+                var isSource = s.SourceId == player.EntityId;
+                builder.AppendLine($"  StatusId={s.StatusId} | {statusName} | 剩余={s.RemainingTime:0.0}s | 来源={(isSource ? "自身" : $"他人({s.SourceId})")}");
+            }
         }
 
         return builder.ToString().TrimEnd();

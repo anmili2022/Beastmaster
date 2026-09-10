@@ -27,7 +27,12 @@ public sealed class PluginUI
     private readonly BeastmasterAutoCaptureService autoCaptureService;
     private readonly BeastmasterCatalogSyncService catalogSyncService;
     private string debugQuery = "驯兽";
+    private string debugActionId = "44890";
     private string debugResult = "点击按钮读取客户端资料。";
+    private bool debugUseAdjustedActionId = true;
+    private int debugSearchType;
+    private int debugProjectDataType;
+    private int debugCurrentStateType;
     private DateTime nextQuestStatusRefreshUtc = DateTime.MinValue;
     private DateTime nextGaugeRefreshUtc = DateTime.MinValue;
     private BeastmasterGaugeSnapshot gaugeSnapshot = BeastmasterGaugeSnapshot.Unavailable("等待读取");
@@ -146,7 +151,7 @@ public sealed class PluginUI
         }
         ImGui.SameLine();
         DrawCompactCaptureHpThreshold();
-        DrawOverlayAdvancedActionToggles();
+        DrawAdvancedActionToggles();
 
         if (ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows)
             && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
@@ -177,17 +182,33 @@ public sealed class PluginUI
         }
 
         ImGui.SameLine();
-        DrawOverlayStatusBadge(
-            autoCaptureService.IsEnabled ? "自动" : "关闭",
-            autoCaptureService.IsEnabled
+        var headerStatus = !autoCaptureService.IsEnabled
+            ? "关闭"
+            : autoCaptureService.IsPaused ? "暂停" : "自动";
+        if (DrawOverlayStatusBadge(
+            headerStatus,
+            autoCaptureService.IsEnabled && !autoCaptureService.IsPaused
                 ? new Vector4(0.2f, 0.42f, 0.28f, 1f)
                 : new Vector4(0.3f, 0.3f, 0.34f, 1f),
-            autoCaptureService.IsEnabled
+            autoCaptureService.IsEnabled && !autoCaptureService.IsPaused
                 ? new Vector4(0.45f, 1f, 0.58f, 1f)
-                : new Vector4(0.7f, 0.7f, 0.75f, 1f));
+                : new Vector4(0.7f, 0.7f, 0.75f, 1f)))
+        {
+            if (autoCaptureService.IsEnabled)
+            {
+                autoCaptureService.SetPaused(!autoCaptureService.IsPaused);
+            }
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(!autoCaptureService.IsEnabled
+                ? "请先在自动输出栏目开启自动输出"
+                : autoCaptureService.IsPaused ? "点击恢复自动输出" : "点击暂停自动输出");
+        }
     }
 
-    private static void DrawOverlayStatusBadge(string label, Vector4 background, Vector4 textColor)
+    private static bool DrawOverlayStatusBadge(string label, Vector4 background, Vector4 textColor)
     {
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 8f);
         ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(7f, 2f));
@@ -196,9 +217,10 @@ public sealed class PluginUI
         ImGui.PushStyleColor(ImGuiCol.ButtonActive, background);
         ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0f, 0f, 0f, 0f));
         ImGui.PushStyleColor(ImGuiCol.Text, textColor);
-        ImGui.Button(label);
+        var clicked = ImGui.Button(label);
         ImGui.PopStyleColor(5);
         ImGui.PopStyleVar(2);
+        return clicked;
     }
 
     private void DrawMainShell()
@@ -324,6 +346,12 @@ public sealed class PluginUI
             gaugeSnapshot.Tp >= 100 && gaugeSnapshot.BeastPower >= 100
                 ? "技力和兽力满足基础门槛"
                 : $"资源不足：技力 {gaugeSnapshot.Tp}/100，兽力 {gaugeSnapshot.BeastPower}/100");
+        var thirdFormEnabled = configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled;
+        DrawAdvancedCandidate(
+            configuration.PhysicalThirdFormEnabled ? "三式（物理）" : "三式（魔法）",
+            GetThirdFormActionName(gaugeSnapshot),
+            thirdFormEnabled,
+            GetThirdFormReason(gaugeSnapshot));
         ImGui.TextDisabled($"释放：运行时调整技能（{(configuration.AutoReleaseEnabled ? "开启" : "关闭")}）");
         if (ImGui.Button($"手动释放大招##manual-ultimate-overlay"))
         {
@@ -1028,6 +1056,13 @@ public sealed class PluginUI
             autoCaptureService.SetEnabled(enabled);
         }
         ImGui.PopStyleColor();
+        var paused = autoCaptureService.IsPaused;
+        if (ImGui.Checkbox("暂停", ref paused))
+        {
+            autoCaptureService.SetPaused(paused);
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("暂停时保留自动输出总开关，但不执行任何动作");
         ImGui.TextDisabled("仅对当前手动选择的敌对目标生效；无捕获状态时优先捕获，再执行 1→2→3 连击。");
         DrawCaptureHpThreshold();
         DrawSettingCheckbox(
@@ -1035,11 +1070,15 @@ public sealed class PluginUI
             "显示悬浮窗中的原因、捕获状态、当前魔兽、量谱和高级技能候选等详细信息。默认关闭。",
             nameof(configuration.ShowGaugeInOverlay),
             configuration.ShowGaugeInOverlay);
+        ImGui.Spacing();
+        DrawAdvancedActionToggles();
 
         ImGui.Spacing();
         ImGui.Text("当前模式");
         ImGui.Text(autoCaptureService.IsEnabled
-            ? autoCaptureService.TryCapture ? "自动捕获中..." : "自动攻击中..."
+            ? autoCaptureService.IsPaused
+                ? "已暂停"
+                : autoCaptureService.TryCapture ? "自动捕获中..." : "自动攻击中..."
             : "未开启");
         ImGui.TextDisabled("开启后可在悬浮窗中切换“尝试捕获”，右键悬浮窗可打开设置。");
 
@@ -1056,10 +1095,14 @@ public sealed class PluginUI
             : configuration.BeastHeartCooperationEnabled
                 ? "御兽协作（黄豆）"
                 : configuration.BeastSoulCooperationEnabled
-                    ? "兽灵协作（蓝豆）"
-                    : "总开关已开，但未选择协作模式";
+                     ? "兽灵协作（蓝豆）"
+                    : configuration.PhysicalThirdFormEnabled
+                        ? "三式（物理）"
+                        : configuration.MagicalThirdFormEnabled
+                            ? "三式（魔法）"
+                            : "总开关已开，但未选择高级模式";
 
-    private void DrawOverlayAdvancedActionToggles()
+    private void DrawAdvancedActionToggles()
     {
         var advancedEnabled = configuration.AdvancedActionsEnabled;
         if (ImGui.Checkbox("高级技能", ref advancedEnabled))
@@ -1092,6 +1135,28 @@ public sealed class PluginUI
             if (beastSoulEnabled)
             {
                 configuration.BeastHeartCooperationEnabled = false;
+            }
+            configuration.Save();
+        }
+
+        var physicalThirdFormEnabled = configuration.PhysicalThirdFormEnabled;
+        if (ImGui.Checkbox("三式（物理）", ref physicalThirdFormEnabled))
+        {
+            configuration.PhysicalThirdFormEnabled = physicalThirdFormEnabled;
+            if (physicalThirdFormEnabled)
+            {
+                configuration.MagicalThirdFormEnabled = false;
+            }
+            configuration.Save();
+        }
+
+        var magicalThirdFormEnabled = configuration.MagicalThirdFormEnabled;
+        if (ImGui.Checkbox("三式（魔法）", ref magicalThirdFormEnabled))
+        {
+            configuration.MagicalThirdFormEnabled = magicalThirdFormEnabled;
+            if (magicalThirdFormEnabled)
+            {
+                configuration.PhysicalThirdFormEnabled = false;
             }
             configuration.Save();
         }
@@ -1171,6 +1236,7 @@ public sealed class PluginUI
                 : "未召唤", "当前兽笛类型");
             DrawGaugeRow("御兽之心", $"{snapshot.BeastHeartStacks} 层", "协作量谱");
             DrawGaugeRow("兽灵之心", $"{snapshot.BeastSoulStacks} 层", "协作量谱");
+            DrawGaugeRow("黑白状态", GetBlackWhiteStatus(snapshot), "生息 4599 / 死灭 4600");
             ImGui.EndTable();
         }
 
@@ -1230,6 +1296,40 @@ public sealed class PluginUI
             ? "技力与兽力已满足，可结合御兽之心安排协作技"
             : "技力与兽力已满足，可执行连招";
     }
+
+    private static string GetBlackWhiteStatus(BeastmasterGaugeSnapshot snapshot)
+        => (snapshot.HasWhiteStatus, snapshot.HasPurpleStatus) switch
+        {
+            (true, true) => "白（生息）与黑/紫（死灭）同时激活",
+            (true, false) => "白（生息）",
+            (false, true) => "黑/紫（死灭）",
+            _ => "未激活",
+        };
+
+    private string GetThirdFormActionName(BeastmasterGaugeSnapshot snapshot)
+    {
+        if (!configuration.PhysicalThirdFormEnabled && !configuration.MagicalThirdFormEnabled)
+        {
+            return "-";
+        }
+
+        var actionId = snapshot.BeastHeartStacks >= 3 && (snapshot.HasWhiteStatus || snapshot.HasPurpleStatus)
+            ? 44905u
+            : (snapshot.HasWhiteStatus, snapshot.HasPurpleStatus) switch
+        {
+            (true, _) => configuration.PhysicalThirdFormEnabled ? 44931u : 44933u,
+            (false, true) => configuration.PhysicalThirdFormEnabled ? 44930u : 44932u,
+            _ => 44905u,
+        };
+        return GetActionName(actionId);
+    }
+
+    private static string GetThirdFormReason(BeastmasterGaugeSnapshot snapshot)
+        => snapshot.BeastHeartStacks >= 3 && (snapshot.HasWhiteStatus || snapshot.HasPurpleStatus)
+            ? $"{GetBlackWhiteStatus(snapshot)}，御兽之心 {snapshot.BeastHeartStacks} 层，可使用鼓劲"
+            : snapshot.HasWhiteStatus || snapshot.HasPurpleStatus
+                ? $"{GetBlackWhiteStatus(snapshot)}，等待御兽之心 3 层（当前 {snapshot.BeastHeartStacks} 层）"
+                : "等待生息（白）或死灭（黑/紫）状态";
 
     private static void DrawGaugeRow(string name, object value, string description)
     {
@@ -1339,92 +1439,58 @@ public sealed class PluginUI
     private void DrawDebug()
     {
         ImGui.Text("DEBUG");
-        ImGui.TextDisabled("读取国服客户端名称、稳定标识和任务原始资料。");
+        ImGui.TextDisabled("选择资料类型后读取；读取结果会自动复制到剪贴板。");
         ImGui.Separator();
+
+        ImGui.Text("技能状态");
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - 72f));
+        ImGui.InputText("##DebugActionId", ref debugActionId, 10);
+        ImGui.SameLine();
+        if (ImGui.Button("查询##DebugActionStatus"))
+        {
+            try
+            {
+                SetDebugResult(uint.TryParse(debugActionId, out var actionId)
+                    ? debugDataService.GetActionStatusDebug(actionId, debugUseAdjustedActionId)
+                    : "技能状态\n请输入有效的数字 ActionId。");
+            }
+            catch (Exception ex)
+            {
+                SetDebugResult($"技能状态\n查询异常: {ex.Message}");
+            }
+        }
+
+        ImGui.Checkbox("使用 GetAdjustedActionId", ref debugUseAdjustedActionId);
+        ImGui.Spacing();
+
+        ImGui.Text("关键词查询");
         ImGui.SetNextItemWidth(-1f);
         ImGui.InputText("##DebugQuery", ref debugQuery, 128);
 
-        DrawDebugSearchButtons();
+        DrawDebugActionRow(
+            "##DebugSearchType",
+            ref debugSearchType,
+            "职业\0任务\0物品\0NPC\0怪物\0副本\0",
+            "查询##DebugSearch",
+            RunDebugSearch);
 
-        if (ImGui.Button("读取任务：驯养魔兽之人"))
-        {
-            SetDebugResult(debugDataService.FindQuests("驯养魔兽之人"));
-        }
+        ImGui.Spacing();
+        ImGui.Text("项目资料");
+        DrawDebugActionRow(
+            "##DebugProjectDataType",
+            ref debugProjectDataType,
+            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0",
+            "读取##DebugProjectData",
+            RunDebugProjectData);
 
-        ImGui.SameLine();
-        if (ImGui.Button("采集当前所有任务状态"))
-        {
-            SetDebugResult(questService.GetActiveQuestsDebug());
-        }
-
-        if (ImGui.Button("读取驯兽师任务链"))
-        {
-            SetDebugResult(debugDataService.FindBeastmasterQuestChain());
-        }
-
-        if (ImGui.Button("读取图鉴副本 ID"))
-        {
-            SetDebugResult(debugDataService.FindCatalogDuties());
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("读取自动捕获 ID"))
-        {
-            SetDebugResult(debugDataService.FindAutoCaptureData());
-        }
-
-        if (ImGui.Button("读取驯兽师量谱原始数据"))
-        {
-            SetDebugResult(debugDataService.GetBeastmasterGaugeRaw());
-        }
-
-        if (ImGui.Button("读取魔兽属性映射"))
-        {
-            SetDebugResult(debugDataService.FindBeastmasterAttributes());
-        }
-
-        if (ImGui.Button("探测魔兽图鉴客户端数据"))
-        {
-            SetDebugResult(debugDataService.GetBeastmasterCatalogProbe());
-        }
-
-        if (ImGui.Button("读取推荐装备物品 ID"))
-        {
-            SetDebugResult(debugDataService.FindRecommendedEquipmentIds());
-        }
-
-        if (ImGui.Button("读取当前目标状态"))
-        {
-            SetDebugResult(debugDataService.GetCurrentTargetDebug());
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("读取当前连击状态"))
-        {
-            SetDebugResult(debugDataService.GetComboDebug());
-        }
-
-        if (ImGui.Button("读取协力验证数据"))
-        {
-            SetDebugResult(debugDataService.GetCooperationValidationDebug());
-        }
-
-        if (ImGui.Button("读取当前角色"))
-        {
-            SetDebugResult(debugDataService.GetCharacter());
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("读取当前位置"))
-        {
-            SetDebugResult(debugDataService.GetLocation());
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("复制结果"))
-        {
-            ImGui.SetClipboardText(debugResult);
-        }
+        ImGui.Spacing();
+        ImGui.Text("当前状态");
+        DrawDebugActionRow(
+            "##DebugCurrentStateType",
+            ref debugCurrentStateType,
+            "驯兽师量谱原始数据\0当前目标状态\0当前连击状态\0协力验证数据\0当前角色\0当前位置\0目标捕获判定\0",
+            "读取##DebugCurrentState",
+            RunDebugCurrentState);
 
         ImGui.Separator();
         if (ImGui.BeginChild("DebugResult", Vector2.Zero, true))
@@ -1435,19 +1501,65 @@ public sealed class PluginUI
         ImGui.EndChild();
     }
 
-    private void DrawDebugSearchButtons()
+    private static void DrawDebugActionRow(
+        string comboId,
+        ref int selectedIndex,
+        string options,
+        string buttonLabel,
+        System.Action action)
     {
-        if (ImGui.Button("读取职业")) SetDebugResult(debugDataService.FindClassJobs(debugQuery));
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - 72f));
+        ImGui.Combo(comboId, ref selectedIndex, options);
         ImGui.SameLine();
-        if (ImGui.Button("读取任务")) SetDebugResult(debugDataService.FindQuests(debugQuery));
-        ImGui.SameLine();
-        if (ImGui.Button("读取物品")) SetDebugResult(debugDataService.FindItems(debugQuery));
-        ImGui.SameLine();
-        if (ImGui.Button("读取 NPC")) SetDebugResult(debugDataService.FindNpcs(debugQuery));
-        ImGui.SameLine();
-        if (ImGui.Button("读取怪物")) SetDebugResult(debugDataService.FindMonsters(debugQuery));
-        ImGui.SameLine();
-        if (ImGui.Button("读取副本")) SetDebugResult(debugDataService.FindDuties(debugQuery));
+        if (ImGui.Button(buttonLabel))
+        {
+            action();
+        }
+    }
+
+    private void RunDebugSearch()
+    {
+        SetDebugResult(debugSearchType switch
+        {
+            0 => debugDataService.FindClassJobs(debugQuery),
+            1 => debugDataService.FindQuests(debugQuery),
+            2 => debugDataService.FindItems(debugQuery),
+            3 => debugDataService.FindNpcs(debugQuery),
+            4 => debugDataService.FindMonsters(debugQuery),
+            5 => debugDataService.FindDuties(debugQuery),
+            _ => "未知查询类型。",
+        });
+    }
+
+    private void RunDebugProjectData()
+    {
+        SetDebugResult(debugProjectDataType switch
+        {
+            0 => debugDataService.FindQuests("驯养魔兽之人"),
+            1 => questService.GetActiveQuestsDebug(),
+            2 => debugDataService.FindBeastmasterQuestChain(),
+            3 => debugDataService.FindCatalogDuties(),
+            4 => debugDataService.FindAutoCaptureData(),
+            5 => debugDataService.FindBeastmasterAttributes(),
+            6 => debugDataService.GetBeastmasterCatalogProbe(),
+            7 => debugDataService.FindRecommendedEquipmentIds(),
+            _ => "未知项目资料类型。",
+        });
+    }
+
+    private void RunDebugCurrentState()
+    {
+        SetDebugResult(debugCurrentStateType switch
+        {
+            0 => debugDataService.GetBeastmasterGaugeRaw(),
+            1 => debugDataService.GetCurrentTargetDebug(),
+            2 => debugDataService.GetComboDebug(),
+            3 => debugDataService.GetCooperationValidationDebug(),
+            4 => debugDataService.GetCharacter(),
+            5 => debugDataService.GetLocation(),
+            6 => debugDataService.GetCaptureCheckDebug(),
+            _ => "未知当前状态类型。",
+        });
     }
 
     private void SetDebugResult(string result)
