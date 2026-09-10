@@ -25,6 +25,12 @@ https://raw.githubusercontent.com/anmili2022/Beastmaster/main/repo.json
 
 - `/beastmaster`：打开驯兽师助手。
 - `/驯兽师`：打开驯兽师助手。
+- `/驯兽师 输出`：切换自动输出和暂停状态；关闭时开启，暂停时恢复，运行时暂停。
+- `/驯兽师 暂停`：暂停自动输出但保留开关状态。
+- `/驯兽师 恢复`：恢复已暂停的自动输出。
+- `/驯兽师 关闭`：关闭自动输出。
+
+以上自动输出子命令也支持英文命令 `/beastmaster output|pause|resume|off`。
 
 ## 构建
 

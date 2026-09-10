@@ -13,6 +13,7 @@ public sealed class PluginUI
         ("quests", "驯兽师任务链"),
         ("catalog", "魔兽图鉴"),
         ("equipment", "推荐装备"),
+        ("combinations", "推荐组合"),
         ("commands", "快捷指令"),
         ("auto-output", "自动输出"),
         ("settings", "设置"),
@@ -419,10 +420,11 @@ public sealed class PluginUI
         DrawSidebarButton(MainSections[2]);
         DrawSidebarButton(MainSections[3]);
         DrawSidebarButton(MainSections[4]);
+        DrawSidebarButton(MainSections[5]);
 
         ImGui.Separator();
         DrawSidebarLabel("工具");
-        DrawSidebarButton(MainSections[5]);
+        DrawSidebarButton(MainSections[6]);
 
         if (ImGui.Button("反馈与建议", new Vector2(ImGui.GetContentRegionAvail().X, 30f)))
         {
@@ -433,7 +435,7 @@ public sealed class PluginUI
             });
         }
 
-        DrawSidebarButton(MainSections[6]);
+        DrawSidebarButton(MainSections[7]);
     }
 
     private void DrawSidebarButton((string Key, string Label) section)
@@ -475,6 +477,9 @@ public sealed class PluginUI
             case "equipment":
                 DrawEquipment();
                 break;
+            case "combinations":
+                DrawRecommendedCombinations();
+                break;
             case "commands":
                 DrawCommands();
                 break;
@@ -492,6 +497,61 @@ public sealed class PluginUI
                 DrawQuests();
                 break;
         }
+    }
+
+    private static void DrawRecommendedCombinations()
+    {
+        ImGui.TextColored(new Vector4(1f, 0.35f, 0.25f, 1f), "先做主线，拿到补正装备以后刷级会轻松很多！！！");
+        ImGui.Text("推荐组合");
+        ImGui.TextDisabled("静态攻略参考，不会接入自动输出或自动切换魔兽。");
+        ImGui.Separator();
+
+        ImGui.Text("虫队");
+        ImGui.Text("1、2层速刷");
+        ImGui.TextColored(new Vector4(0.95f, 0.82f, 0.25f, 1f), "推荐阵容：螳螂 + 胡蜂 + 库西");
+        ImGui.TextWrapped("最简单、最无脑的速刷阵容。核心难点是保证螳螂的增益技能不要落空。");
+        ImGui.Text("推荐流程：");
+        ImGui.BulletText("召唤螳螂，先使用增益技能。");
+        ImGui.BulletText("确认增益命中后，释放螳螂并使用最后一击。");
+        ImGui.BulletText("切换胡蜂，完成召唤并释放。");
+        ImGui.BulletText("切换库西，完成召唤并释放，持续输出至战斗结束。");
+        ImGui.TextDisabled("注意：螳螂增益是整个流程的关键，尽量不要空放。");
+
+        ImGui.Separator();
+        ImGui.Text("水队");
+        ImGui.Text("参考阵容");
+        ImGui.TextColored(new Vector4(0.35f, 0.75f, 1f, 1f), "蝾螈 + 巨型陆蟹 + 壳蟹");
+        ImGui.TextWrapped("核心思路是由蝾螈和巨型陆蟹分别提供魔法易伤与水属性易伤，三号位壳蟹负责主要输出。");
+        ImGui.Text("推荐流程：");
+        ImGui.BulletText("开战前先切换到三号兽笛，准备壳蟹的借用。");
+        ImGui.BulletText("召唤蝾螈并施加魔法易伤，再召唤巨型陆蟹并施加水属性易伤。");
+        ImGui.BulletText("巨型陆蟹完成一轮连携后再释放，随后切换壳蟹输出。");
+        ImGui.BulletText("借用的水栖波用于远程止损，尽量安排在易伤 Buff 持续期间。");
+        ImGui.BulletText("水栖波还可以驱散敌方增益 Buff，使用时注意敌方状态。");
+
+        ImGui.Spacing();
+        ImGui.Text("水队 1、2层速刷变体");
+        ImGui.TextColored(new Vector4(0.35f, 0.75f, 1f, 1f), "蝾螈 + 巨型陆蟹 + 碧企鹅");
+        ImGui.TextWrapped("三号位也可以选择高魔法伤害的打手。目前推荐碧企鹅，整体流程与壳蟹水队相同，但可以更直接地进入终结输出。");
+        ImGui.BulletText("开战前切换到三号兽笛，准备碧企鹅的借用。");
+        ImGui.BulletText("蝾螈和巨型陆蟹完成易伤铺设后，直接释放巨型陆蟹。");
+        ImGui.BulletText("不必等待巨型陆蟹完成完整连携，切换碧企鹅完成后续输出。");
+        ImGui.TextDisabled("壳蟹阵容更强调完整利用连携；碧企鹅变体更适合 1、2 层速刷。");
+
+        ImGui.Separator();
+        ImGui.Text("投稿与来源");
+        ImGui.Text("投稿来源：网友 大三元");
+        ImGui.Text("水队参考视频：夜风");
+        if (ImGui.Button("打开 Bilibili 参考视频##recommended-combination-bilibili"))
+        {
+            Process.Start(new ProcessStartInfo(
+                "https://www.bilibili.com/video/BV1c1Y46AEnN/?spm_id_from=333.788.videopod.sections&vd_source=e8d743edd1edd93f4c56cdcf6833f6ff&p=2")
+            {
+                UseShellExecute = true,
+            });
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("点击后使用系统浏览器打开");
     }
 
     private void DrawQuests()

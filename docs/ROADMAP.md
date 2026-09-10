@@ -51,12 +51,14 @@
 - 记录第二套 50 级 BIS，可在推荐装备页切换方案
 - 装备名称可点击访问对应的灰机 Wiki 物品详情页
 - 推荐装备显示背包和对应兵装库中的持有状态及数量
+- 新增独立“推荐组合”栏目，静态展示虫队、水队和水队速刷变体，并提供 Bilibili 参考视频链接
 - 推荐装备持有状态改为固定 ItemId 检测，避免装备同名或名称变化导致误判
 
 **快捷指令**
 
 - "魔兽图鉴"按钮：通过 UIModule 执行 `/魔兽图鉴`（不使用 ICommandManager）
 - 驯兽师魔兽体型按钮：`/beastpetsize all small`、`medium`、`large`
+- `/驯兽师 输出`切换自动输出和暂停状态，`暂停`、`恢复`、`关闭`提供显式控制；英文命令支持 `output`、`pause`、`resume`、`off`
 
 **自动记录**
 
@@ -174,8 +176,9 @@
 - `scripts/release.ps1`：本地版本更新 + 推送 + 等待 CI
 - `repo.json`：Dalamud 自定义插件仓库
 - `docs/release.md`：发布操作手册
-- `images/icon.png`：1280×1280 插件图标
+- `images/icon.png`：150×150 插件图标
 - `.csproj` 自动复制 icon.png 到输出根目录
+- 插件图标使用 `150×150` PNG，兼容 Dalamud 插件列表图标加载
 
 ### 当前目录结构
 

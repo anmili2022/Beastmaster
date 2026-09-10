@@ -36,11 +36,11 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
 
         DalamudApi.Commands.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "打开驯兽师助手。",
+            HelpMessage = "打开驯兽师助手；子命令：输出、暂停、恢复、关闭。",
         });
         DalamudApi.Commands.AddHandler(ChineseCommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "打开驯兽师助手。",
+            HelpMessage = "打开驯兽师助手；子命令：输出、暂停、恢复、关闭。",
         });
 
         pluginInterface.UiBuilder.Draw += ui.Draw;
@@ -66,6 +66,47 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
-        ui.OpenMainWindow();
+        switch (args.Trim())
+        {
+            case "输出":
+            case "output":
+                if (!autoCaptureService.IsEnabled)
+                {
+                    autoCaptureService.SetEnabled(true);
+                    autoCaptureService.SetPaused(false);
+                }
+                else
+                {
+                    autoCaptureService.SetPaused(!autoCaptureService.IsPaused);
+                    DalamudApi.ChatGui.Print(autoCaptureService.IsPaused
+                        ? "[驯兽师助手] 自动输出已暂停。"
+                        : "[驯兽师助手] 自动输出已恢复。");
+                }
+
+                return;
+            case "暂停":
+            case "pause":
+                autoCaptureService.SetPaused(true);
+                DalamudApi.ChatGui.Print("[驯兽师助手] 自动输出已暂停。使用 /驯兽师 恢复继续输出。");
+                return;
+            case "恢复":
+            case "resume":
+                if (!autoCaptureService.IsEnabled)
+                {
+                    DalamudApi.ChatGui.Print("[驯兽师助手] 自动输出尚未开启，请先使用 /驯兽师 输出。");
+                    return;
+                }
+
+                autoCaptureService.SetPaused(false);
+                DalamudApi.ChatGui.Print("[驯兽师助手] 自动输出已恢复。");
+                return;
+            case "关闭":
+            case "off":
+                autoCaptureService.SetEnabled(false);
+                return;
+            default:
+                ui.OpenMainWindow();
+                return;
+        }
     }
 }

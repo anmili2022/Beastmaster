@@ -2,7 +2,7 @@
   "Author": "Anmi",
   "Name": "驯兽师助手",
   "Punchline": "追踪驯兽师成长和魔兽图鉴收集进度。",
-  "Description": "驯兽师助手用于追踪驯兽师任务链和魔兽图鉴收集进度，支持捕获消息自动记录、任务与图鉴目标导航，并可配合 vnavmesh 和 Lifestream 完成同地图移动及跨地图传送。",
+  "Description": "驯兽师助手用于追踪驯兽师任务链和魔兽图鉴收集进度，支持捕获消息自动记录、任务与图鉴目标导航，并可配合 vnavmesh 和 Lifestream 完成同地图移动及跨地图传送。命令：/驯兽师 输出，可在自动输出与暂停状态之间切换。",
   "Tags": [
     "beastmaster",
     "tracker",
@@ -12,7 +12,7 @@
     "Utility"
   ],
   "InternalName": "Beastmaster",
-  "IconUrl": "https://raw.githubusercontent.com/anmili2022/Beastmaster/main/images/icon.png",
+  "IconUrl": "https://raw.githubusercontent.com/anmili2022/Beastmaster/main/images/icon.png?v=2",
   "ApplicableVersion": "any",
   "AssemblyVersion": "0.1.16.0",
   "DalamudApiLevel": 15
