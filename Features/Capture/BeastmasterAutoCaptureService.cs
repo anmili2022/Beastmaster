@@ -91,6 +91,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     public bool TryCapture => configuration.AutoCaptureTryCapture;
 
+    public bool ForceCapture => configuration.ForceCaptureEnabled;
+
     public bool BasicComboEnabled => configuration.BasicComboEnabled;
 
     public void SetEnabled(bool enabled)
@@ -116,6 +118,20 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     public void SetTryCapture(bool enabled)
     {
         configuration.AutoCaptureTryCapture = enabled;
+        if (!enabled)
+        {
+            configuration.ForceCaptureEnabled = false;
+        }
+        configuration.Save();
+    }
+
+    public void SetForceCapture(bool enabled)
+    {
+        configuration.ForceCaptureEnabled = enabled;
+        if (enabled)
+        {
+            configuration.AutoCaptureTryCapture = true;
+        }
         configuration.Save();
     }
 
@@ -503,7 +519,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        if (configuration.AutoCaptureTryCapture && !hasOwnCapture && canCapture)
+        if (configuration.AutoCaptureTryCapture && (configuration.ForceCaptureEnabled || (!hasOwnCapture && canCapture)))
         {
             actionId = captureActionId;
         }
@@ -523,11 +539,15 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                     : smashActionId;
         }
 
-        StatusText = configuration.AutoCaptureTryCapture ? "自动捕获中..." : "自动攻击中...";
+        StatusText = configuration.AutoCaptureTryCapture
+            ? configuration.ForceCaptureEnabled ? "强制捕获中..." : "自动捕获中..."
+            : "自动攻击中...";
         NextActionName = GetActionName(actionId);
-        NextActionReason = configuration.AutoCaptureTryCapture && !hasOwnCapture && !canCapture
+        NextActionReason = configuration.AutoCaptureTryCapture && !configuration.ForceCaptureEnabled && !hasOwnCapture && !canCapture
             ? $"目标血量 {targetHpPercent:0.#}% 高于捕获阈值 {configuration.CaptureHpThreshold:0.#}%"
-            : actionId == BeastmasterUltimateActionId
+            : configuration.AutoCaptureTryCapture && configuration.ForceCaptureEnabled
+                ? "强制捕获模式，无视血量和捕获状态"
+                : actionId == BeastmasterUltimateActionId
                 ? "高级技能已开启，技力和兽力满足大招门槛"
             : hasOwnCapture
                 ? "目标已有自身施加的捕获状态"

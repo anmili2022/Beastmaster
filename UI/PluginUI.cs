@@ -212,6 +212,45 @@ public sealed class PluginUI
                 ? "请先在自动输出栏目开启自动输出"
                 : autoCaptureService.IsPaused ? "点击恢复自动输出" : "点击暂停自动输出");
         }
+
+        ImGui.SameLine();
+        var tryCapture = autoCaptureService.TryCapture;
+        var forceCapture = autoCaptureService.ForceCapture;
+        if (DrawOverlayStatusBadge(
+            "捕获",
+            forceCapture
+                ? new Vector4(0.48f, 0.12f, 0.12f, 1f)
+                : tryCapture
+                    ? new Vector4(0.2f, 0.42f, 0.28f, 1f)
+                    : new Vector4(0.3f, 0.3f, 0.34f, 1f),
+            forceCapture
+                ? new Vector4(1f, 0.42f, 0.42f, 1f)
+                : tryCapture
+                    ? new Vector4(0.45f, 1f, 0.58f, 1f)
+                    : new Vector4(0.7f, 0.7f, 0.75f, 1f)))
+        {
+            if (forceCapture)
+            {
+                autoCaptureService.SetTryCapture(false);
+            }
+            else if (tryCapture)
+            {
+                autoCaptureService.SetForceCapture(true);
+            }
+            else
+            {
+                autoCaptureService.SetTryCapture(true);
+            }
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(forceCapture
+                ? "强制捕获：无视目标血量和捕获BUFF；点击关闭捕获"
+                : tryCapture
+                    ? "尝试捕获：按血量和捕获BUFF判断；点击切换为强制捕获"
+                    : "捕获未开启；点击开启尝试捕获");
+        }
     }
 
     private static bool DrawOverlayStatusBadge(string label, Vector4 background, Vector4 textColor)
@@ -1064,6 +1103,13 @@ public sealed class PluginUI
         ImGui.SameLine();
         ImGui.TextDisabled("暂停时保留自动输出总开关，但不执行任何动作");
         ImGui.TextDisabled("仅对当前手动选择的敌对目标生效；无捕获状态时优先捕获，再执行 1→2→3 连击。");
+        var forceCapture = autoCaptureService.ForceCapture;
+        if (ImGui.Checkbox("强制捕获", ref forceCapture))
+        {
+            autoCaptureService.SetForceCapture(forceCapture);
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("尝试捕获开启时，无视目标血量和捕获BUFF");
         DrawCaptureHpThreshold();
         DrawSettingCheckbox(
             "详细模式",
@@ -1079,7 +1125,9 @@ public sealed class PluginUI
         ImGui.Text(autoCaptureService.IsEnabled
             ? autoCaptureService.IsPaused
                 ? "已暂停"
-                : autoCaptureService.TryCapture ? "自动捕获中..." : "自动攻击中..."
+                : autoCaptureService.ForceCapture
+                    ? "强制捕获中..."
+                    : autoCaptureService.TryCapture ? "自动捕获中..." : "自动攻击中..."
             : "未开启");
         ImGui.TextDisabled("开启后可在悬浮窗中切换“尝试捕获”，右键悬浮窗可打开设置。");
 
