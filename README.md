@@ -34,6 +34,6 @@ dotnet build
 
 构建结果位于 `output\Beastmaster.dll`。
 
-量谱资料见 [docs/BST_GAUGE.md](docs/BST_GAUGE.md)，ACR 设计见 [docs/BST_ACR_DESIGN.md](docs/BST_ACR_DESIGN.md)，开发路线见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+量谱资料见 [docs/BST_GAUGE.md](docs/BST_GAUGE.md)，ACR 设计见 [docs/BST_ACR_DESIGN.md](docs/BST_ACR_DESIGN.md)，斗兽塔第一盘资料见 [docs/BEAST_ARENA_ROUND_1.md](docs/BEAST_ARENA_ROUND_1.md)，开发路线见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 发布流程见 [docs/release.md](docs/release.md)。

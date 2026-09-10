@@ -17,6 +17,11 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint PurplePhysicalThirdFormActionId = 44930;
     private const uint WhiteMagicalThirdFormActionId = 44933;
     private const uint PurpleMagicalThirdFormActionId = 44932;
+    private const ushort BeastArenaTerritoryType = 1339;
+    private const uint ProtectedStatusId = 2413;
+    private const uint EnmityUpStatusId = 5586;
+    private const uint AttentionActionId = 46751;
+    private const uint ProvokeActionId = 46750;
     private const uint WhistleOneActionId = 44881;
     private const uint WhistleTwoActionId = 44892;
     private const uint WhistleThreeActionId = 44894;
@@ -39,6 +44,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private DateTime pendingWhistleUntilUtc = DateTime.MinValue;
     private DateTime nextWhistleAttemptUtc = DateTime.MinValue;
     private DateTime nextFinalStrikeAttemptUtc = DateTime.MinValue;
+    private DateTime nextArenaActionAttemptUtc = DateTime.MinValue;
     private bool reportedMissingData;
     private int whistleRotationStage = -1;
     private bool whistleRotationWaitingForCooldown;
@@ -188,7 +194,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         {
             pendingCooperationActionId = followUpActionId;
             pendingCooperationStatusId = requiredStatusId;
-            pendingCooperationUntilUtc = DateTime.UtcNow.AddSeconds(4);
+            pendingCooperationUntilUtc = DateTime.UtcNow.AddSeconds(7);
         }
 
         ManualActionStatus = $"已请求释放：{GetActionName(actionId)}";
@@ -342,6 +348,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
+        if (pendingCooperationActionId == 0
+            && DalamudApi.ClientState.TerritoryType == BeastArenaTerritoryType
+            && TryUseArenaMaintenanceAction(actionManager, player, now))
+        {
+            return;
+        }
+
         if (!configuration.AutoWhistleEnabled && pendingWhistleActionId != 0)
         {
             ResetAutoWhistle();
@@ -426,7 +439,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             actionId = pendingCooperationActionId;
             StatusText = "自动协作技中...";
             NextActionName = GetActionName(actionId);
-            NextActionReason = "协作技第二段，已按属性选择技能";
+            if (pendingCooperationStatusId != 0 && !HasSelfStatus(pendingCooperationStatusId))
+            {
+                NextActionReason = $"等待自身获得{GetAttributeStatusName(pendingCooperationStatusId)}（{pendingCooperationStatusId}）";
+                return;
+            }
+
+            NextActionReason = $"自身已有{GetAttributeStatusName(pendingCooperationStatusId)}，释放协作技第二段";
 
             var cooperationStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
             var cooperationUsed = TryUseAdvancedAction(actionManager, actionId, target.GameObjectId, cooperationStatus);
@@ -477,7 +496,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 nextActionUtc = now.AddMilliseconds(700);
                 pendingCooperationActionId = cooperationFollowUpId;
                 pendingCooperationStatusId = cooperationStatusId;
-                pendingCooperationUntilUtc = now.AddSeconds(4);
+                pendingCooperationUntilUtc = now.AddSeconds(7);
             }
 
             return;
@@ -579,6 +598,56 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         nextReleaseAttemptUtc = now.AddMilliseconds(500);
+        nextActionUtc = now.AddMilliseconds(700);
+        return true;
+    }
+
+    private unsafe bool TryUseArenaMaintenanceAction(
+        ActionManager* actionManager,
+        IBattleChara player,
+        DateTime now)
+    {
+        if (now < nextArenaActionAttemptUtc)
+        {
+            return false;
+        }
+
+        uint actionId;
+        string reason;
+        if (configuration.ArenaKeepAttentionEnabled
+            && !player.StatusList.Any(status => status.StatusId == ProtectedStatusId))
+        {
+            actionId = AttentionActionId;
+            reason = "自身没有被保护（2413）";
+        }
+        else if (configuration.ArenaKeepProvokeEnabled
+            && !player.StatusList.Any(status => status.StatusId == EnmityUpStatusId))
+        {
+            actionId = ProvokeActionId;
+            reason = "自身没有仇恨上升（5586）";
+        }
+        else
+        {
+            return false;
+        }
+
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, 0);
+        if (actionStatus != 0)
+        {
+            nextArenaActionAttemptUtc = now.AddMilliseconds(250);
+            return false;
+        }
+
+        StatusText = "维持斗兽塔技能...";
+        NextActionName = GetActionName(actionId);
+        NextActionReason = reason;
+        if (!actionManager->UseAction(ActionType.Action, actionId, 0))
+        {
+            nextArenaActionAttemptUtc = now.AddMilliseconds(500);
+            return false;
+        }
+
+        nextArenaActionAttemptUtc = now.AddMilliseconds(700);
         nextActionUtc = now.AddMilliseconds(700);
         return true;
     }
@@ -860,11 +929,22 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         pendingCooperationUntilUtc = DateTime.MinValue;
     }
 
-    private bool HasOwnStatus(uint statusId)
+
+    private static bool HasSelfStatus(uint statusId)
     {
         var player = DalamudApi.ObjectTable.LocalPlayer;
-        return player != null && player.StatusList.Any(status => status.StatusId == statusId && status.SourceId == player.EntityId);
+        return player != null && player.StatusList.Any(status => status.StatusId == statusId);
     }
+
+    private static string GetAttributeStatusName(uint statusId)
+        => statusId switch
+        {
+            4595 => "兽心一式·翔",
+            4596 => "兽心一式·猛",
+            4597 => "兽心一式·坚",
+            4598 => "兽心一式·魔",
+            _ => "对应兽心一式状态",
+        };
 
     private static bool TryGetCooperationAction(
         BeastmasterGaugeSnapshot gauge,

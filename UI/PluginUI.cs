@@ -157,6 +157,7 @@ public sealed class PluginUI
             autoCaptureService.SetBasicComboEnabled(basicComboEnabled);
         }
         DrawAdvancedActionToggles();
+        DrawBeastArenaActionToggles();
 
         if (ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows)
             && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
@@ -1071,6 +1072,7 @@ public sealed class PluginUI
             configuration.ShowGaugeInOverlay);
         ImGui.Spacing();
         DrawAdvancedActionToggles();
+        DrawBeastArenaActionToggles();
 
         ImGui.Spacing();
         ImGui.Text("当前模式");
@@ -1197,6 +1199,38 @@ public sealed class PluginUI
         // }
         // ImGui.TextDisabled($"状态：{autoCaptureService.WhistleRotationStatus}");
 
+        ImGui.Unindent();
+    }
+
+    private void DrawBeastArenaActionToggles()
+    {
+        if (!ImGui.CollapsingHeader("斗兽塔技能##BeastArenaActions"))
+        {
+            return;
+        }
+
+        ImGui.Indent();
+        var keepAttentionEnabled = configuration.ArenaKeepAttentionEnabled;
+        if (ImGui.Checkbox("持续吸引（宝宝抗）", ref keepAttentionEnabled))
+        {
+            configuration.ArenaKeepAttentionEnabled = keepAttentionEnabled;
+            configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("仅在区域 1339 生效；自身没有被保护（2413）时使用吸引注意（46751）。");
+        }
+
+        var keepProvokeEnabled = configuration.ArenaKeepProvokeEnabled;
+        if (ImGui.Checkbox("持续挑衅（自己抗）", ref keepProvokeEnabled))
+        {
+            configuration.ArenaKeepProvokeEnabled = keepProvokeEnabled;
+            configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("仅在区域 1339 生效；自身没有仇恨上升（5586）时使用挑衅（46750）。");
+        }
         ImGui.Unindent();
     }
 

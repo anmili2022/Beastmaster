@@ -9,7 +9,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 12;
+    public int Version { get; set; } = 13;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -34,6 +34,8 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool AutoWhistleEnabled { get; set; }
     public bool AutoFinalStrikeEnabled { get; set; }
     public float AutoFinalStrikeHpThreshold { get; set; } = 20f;
+    public bool ArenaKeepAttentionEnabled { get; set; }
+    public bool ArenaKeepProvokeEnabled { get; set; }
     public bool AutoReleaseEnabled { get; set; } = true;
     public bool WhistleRotationEnabled { get; set; }
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
@@ -98,6 +100,14 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         }
 
         AutoFinalStrikeHpThreshold = Math.Clamp(AutoFinalStrikeHpThreshold, 1f, 100f);
+
+        if (Version < 13)
+        {
+            ArenaKeepAttentionEnabled = false;
+            ArenaKeepProvokeEnabled = false;
+            Version = 13;
+            Save();
+        }
     }
 
     public void Save()
