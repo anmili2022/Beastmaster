@@ -237,9 +237,7 @@ public sealed unsafe class BeastmasterCatalogSyncService
             var captured = capturedValue.TypeCode() == 2 && capturedValue.Bool;
 
             var expectedIcon = captured ? CapturedIconBase + (uint)number : MissingIcon;
-            var expectedText = number.ToString(CultureInfo.InvariantCulture);
             if (numberValue.TypeCode() != 5 || numberValue.UInt != number
-                || ReadString(textValue) != expectedText
                 || capturedValue.TypeCode() != 2
                 || iconValue.TypeCode() != 5
                 || iconValue.UInt != expectedIcon)
@@ -250,7 +248,7 @@ public sealed unsafe class BeastmasterCatalogSyncService
                     + $"编号字段：{FormatValue(numberValue)}，期望 TypeCode=5 UInt={number}\n"
                     + $"捕获字段：{FormatValue(capturedValue)}，期望 TypeCode=2 Bool={captured}\n"
                     + $"图标字段：{FormatValue(iconValue)}，期望 TypeCode=5 UInt={expectedIcon}\n"
-                    + $"文本字段：{FormatValue(textValue)}，期望文本={expectedText}");
+                    + $"文本字段（仅诊断，不参与本地化校验）：{FormatValue(textValue)}");
             }
 
             result.Add((number, captured));

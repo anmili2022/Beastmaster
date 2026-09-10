@@ -502,41 +502,32 @@ public sealed class PluginUI
     private static void DrawRecommendedCombinations()
     {
         ImGui.TextColored(new Vector4(1f, 0.35f, 0.25f, 1f), "先做主线，拿到补正装备以后刷级会轻松很多！！！");
-        ImGui.Text("推荐组合");
-        ImGui.TextDisabled("静态攻略参考，不会接入自动输出或自动切换魔兽。");
+        ImGui.Text("推荐组合"); ImGui.SameLine();
+        ImGui.TextDisabled("静态攻略，不接入自动输出");
         ImGui.Separator();
 
-        ImGui.Text("虫队");
-        ImGui.Text("1、2层速刷");
+        ImGui.Text("虫队 · 1、2层速刷");
         ImGui.TextColored(new Vector4(0.95f, 0.82f, 0.25f, 1f), "推荐阵容：螳螂 + 胡蜂 + 库西");
         ImGui.TextWrapped("最简单、最无脑的速刷阵容。核心难点是保证螳螂的增益技能不要落空。");
-        ImGui.Text("推荐流程：");
-        ImGui.BulletText("召唤螳螂，先使用增益技能。");
-        ImGui.BulletText("确认增益命中后，释放螳螂并使用最后一击。");
-        ImGui.BulletText("切换胡蜂，完成召唤并释放。");
-        ImGui.BulletText("切换库西，完成召唤并释放，持续输出至战斗结束。");
-        ImGui.TextDisabled("注意：螳螂增益是整个流程的关键，尽量不要空放。");
+        DrawCombinationStep("1 笛召唤螳螂，施加物理易伤", true, "，再使用");
+        DrawCombinationStep("2 笛召唤胡蜂，使用", false, "进行自爆。");
+        DrawCombinationStep("3 笛召唤库西，使用", false, "，正常输出。");
 
         ImGui.Separator();
-        ImGui.Text("水队");
-        ImGui.Text("参考阵容");
+        ImGui.Text("水队 · 参考阵容");
         ImGui.TextColored(new Vector4(0.35f, 0.75f, 1f, 1f), "蝾螈 + 巨型陆蟹 + 壳蟹");
         ImGui.TextWrapped("核心思路是由蝾螈和巨型陆蟹分别提供魔法易伤与水属性易伤，三号位壳蟹负责主要输出。");
-        ImGui.Text("推荐流程：");
-        ImGui.BulletText("开战前先切换到三号兽笛，准备壳蟹的借用。");
-        ImGui.BulletText("召唤蝾螈并施加魔法易伤，再召唤巨型陆蟹并施加水属性易伤。");
-        ImGui.BulletText("巨型陆蟹完成一轮连携后再释放，随后切换壳蟹输出。");
-        ImGui.BulletText("借用的水栖波用于远程止损，尽量安排在易伤 Buff 持续期间。");
-        ImGui.BulletText("水栖波还可以驱散敌方增益 Buff，使用时注意敌方状态。");
+        ImGui.TextDisabled("开战前先切 3 笛准备壳蟹的借用；水栖波尽量打在易伤 Buff 内，也可驱散敌方增益。");
+        DrawCombinationStep("1 笛召唤蝾螈，施加魔法易伤", true, "，再使用");
+        DrawCombinationStep("2 笛召唤巨型陆蟹，施加水属性易伤", true, "，打一套连携后使用");
+        DrawCombinationStep("3 笛召唤壳蟹", false, "，正常输出。");
 
-        ImGui.Spacing();
-        ImGui.Text("水队 1、2层速刷变体");
+        ImGui.Text("水队 · 1、2层速刷变体");
         ImGui.TextColored(new Vector4(0.35f, 0.75f, 1f, 1f), "蝾螈 + 巨型陆蟹 + 碧企鹅");
-        ImGui.TextWrapped("三号位也可以选择高魔法伤害的打手。目前推荐碧企鹅，整体流程与壳蟹水队相同，但可以更直接地进入终结输出。");
-        ImGui.BulletText("开战前切换到三号兽笛，准备碧企鹅的借用。");
-        ImGui.BulletText("蝾螈和巨型陆蟹完成易伤铺设后，直接释放巨型陆蟹。");
-        ImGui.BulletText("不必等待巨型陆蟹完成完整连携，切换碧企鹅完成后续输出。");
-        ImGui.TextDisabled("壳蟹阵容更强调完整利用连携；碧企鹅变体更适合 1、2 层速刷。");
+        ImGui.TextDisabled("开战前先切 3 笛准备碧企鹅的借用；陆蟹无需等待完整连携。");
+        DrawCombinationStep("1 笛召唤蝾螈，施加魔法易伤", true, "，再使用");
+        DrawCombinationStep("2 笛召唤巨型陆蟹，施加水属性易伤", true, "，无需等待完整连携，直接使用");
+        DrawCombinationStep("3 笛召唤碧企鹅", false, "，正常输出。");
 
         ImGui.Separator();
         ImGui.Text("投稿与来源");
@@ -552,6 +543,55 @@ public sealed class PluginUI
         }
         ImGui.SameLine();
         ImGui.TextDisabled("点击后使用系统浏览器打开");
+    }
+
+    private static void DrawCombinationStep(string prefix, bool finalStrike, string suffix)
+    {
+        ImGui.Bullet();
+        ImGui.SameLine();
+        ImGui.TextUnformatted(prefix);
+        ImGui.SameLine(0f, 3f);
+        DrawCombinationAction("[释放]", 44890, new Vector4(1f, 0.82f, 0.25f, 1f));
+        if (finalStrike)
+        {
+            ImGui.SameLine(0f, 3f);
+            ImGui.TextUnformatted(suffix);
+            ImGui.SameLine(0f, 3f);
+            DrawCombinationAction("[最后一击]", 44891, new Vector4(1f, 0.4f, 0.3f, 1f));
+            ImGui.SameLine(0f, 3f);
+            ImGui.TextUnformatted("。");
+        }
+        else
+        {
+            ImGui.SameLine(0f, 3f);
+            ImGui.TextUnformatted(suffix);
+        }
+    }
+
+    private static void DrawCombinationAction(string label, uint actionId, Vector4 color)
+    {
+        ImGui.TextColored(color, label);
+        if (!ImGui.IsItemHovered())
+        {
+            return;
+        }
+
+        ImGui.BeginTooltip();
+        DrawActionTooltip("技能", actionId);
+        var description = actionId switch
+        {
+            44890u => "令当前召唤兽对目标使用对应的释放技能；实际技能会根据当前召唤兽调整。",
+            44891u => "令当前召唤兽对目标使用最后一击。",
+            _ => string.Empty,
+        };
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            ImGui.Separator();
+            ImGui.PushTextWrapPos(ImGui.GetFontSize() * 28f);
+            ImGui.TextWrapped(description);
+            ImGui.PopTextWrapPos();
+        }
+        ImGui.EndTooltip();
     }
 
     private void DrawQuests()
