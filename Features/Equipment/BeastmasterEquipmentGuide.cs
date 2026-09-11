@@ -23,8 +23,8 @@ public static class BeastmasterEquipmentGuide
 
     public static IReadOnlyList<BeastmasterEquipmentEntry> Level50BestInSlot { get; } =
     [
-        new("主手", "兽王手斧", "武器", 51736),
-        new("副手", "兽王青铜重盾", "盾牌", 51737),
+        new("主手", "兽主手斧", "武器", 50742),
+        new("副手", "兽主青铜重盾", "盾牌", 50743),
         new("头部", "兽主独角冠+4", "防具", 50772),
         new("身体", "兽主裘皮衣+4", "防具", 50773),
         new("手部", "兽主护臂+4", "防具", 50774),

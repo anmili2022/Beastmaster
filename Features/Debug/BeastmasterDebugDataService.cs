@@ -12,6 +12,12 @@ namespace Beastmaster;
 public sealed class BeastmasterDebugDataService
 {
     private const int ResultLimit = 200;
+    private readonly BeastmasterCountdownService countdownService;
+
+    public BeastmasterDebugDataService(BeastmasterCountdownService countdownService)
+    {
+        this.countdownService = countdownService;
+    }
 
     public string GetCharacter()
     {
@@ -856,6 +862,69 @@ public sealed class BeastmasterDebugDataService
             .AppendLine($"角色对象类型: {player.ObjectKind}")
             .AppendLine($"当前目标: {DalamudApi.TargetManager.Target?.Name.TextValue ?? "无"}");
         return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string GetSkillSequenceValidationDebug()
+    {
+        const uint borrowActionId = 44895;
+        const uint beastSkillActionId = 44886;
+        const uint releaseActionId = 44890;
+        const uint beastHideActionId = 44896;
+        const uint shieldChargeActionId = 44893;
+
+        var gauge = BeastmasterGaugeSnapshot.Read();
+        var countdown = countdownService.Snapshot;
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var target = DalamudApi.TargetManager.Target;
+        var manager = ActionManager.Instance();
+        var builder = new StringBuilder()
+            .AppendLine("类型: 技能序列验证数据")
+            .AppendLine("模式: 只读，不释放技能")
+            .AppendLine($"已登录: {DalamudApi.ClientState.IsLoggedIn}")
+            .AppendLine($"职业 ID: {DalamudApi.PlayerState.ClassJob.RowId}")
+            .AppendLine($"InCombat: {DalamudApi.Condition[ConditionFlag.InCombat]}")
+            .AppendLine($"BetweenAreas: {DalamudApi.Condition[ConditionFlag.BetweenAreas]}")
+            .AppendLine($"角色 HP: {(player == null ? "未加载" : $"{player.CurrentHp}/{player.MaxHp}")}")
+            .AppendLine($"角色读条: {player?.IsCasting}")
+            .AppendLine($"当前目标: {target?.Name.TextValue ?? "无"} | GameObjectId={(target?.GameObjectId.ToString() ?? "0")}")
+            .AppendLine($"当前兽笛: {(gauge.WhistleIndex is >= 1 and <= 3 ? gauge.WhistleIndex.ToString() : "未召唤")}")
+            .AppendLine($"当前魔兽: {(gauge.SummonEntry?.Name ?? gauge.SummonName)} | DataId={gauge.SummonDataId}")
+            .AppendLine($"原生倒计时可用: {countdown.Available} | 状态={countdown.Status}")
+            .AppendLine($"原生倒计时激活: {countdown.Active} | 剩余={countdown.TimeRemaining:0.000}s | 发起者={countdown.Initiator}")
+            .AppendLine($"缓存采样时间 UTC: {(countdownService.LastPolledUtc == DateTime.MinValue ? "未采样" : countdownService.LastPolledUtc.ToString("O"))}")
+            .AppendLine($"最近倒计时边沿: {countdownService.LastTransition} | 时间 UTC={(countdownService.LastTransitionUtc == DateTime.MinValue ? "无" : countdownService.LastTransitionUtc.ToString("O"))}")
+            .AppendLine();
+
+        if (manager == null)
+        {
+            builder.AppendLine("ActionManager: 不可用");
+        }
+        else
+        {
+            AppendSequenceAction(builder, manager, "借用", borrowActionId, 0);
+            AppendSequenceAction(builder, manager, "魔兽技", beastSkillActionId, 0);
+            AppendSequenceAction(builder, manager, "释放", releaseActionId, target?.GameObjectId ?? 0);
+            AppendSequenceAction(builder, manager, "百兽肤期望结果", beastHideActionId, 0, adjust: false);
+            AppendSequenceAction(builder, manager, "盾牌冲击", shieldChargeActionId, target?.GameObjectId ?? 0, adjust: false);
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static unsafe void AppendSequenceAction(
+        StringBuilder builder,
+        ActionManager* manager,
+        string label,
+        uint actionId,
+        ulong targetId,
+        bool adjust = true)
+    {
+        var adjustedActionId = adjust ? manager->GetAdjustedActionId(actionId) : actionId;
+        var status = adjustedActionId == 0
+            ? uint.MaxValue
+            : manager->GetActionStatus(ActionType.Action, adjustedActionId, targetId);
+        builder.AppendLine(
+            $"{label}: Base={actionId} | Adjusted={adjustedActionId} | {GetActionNameById(adjustedActionId)} | Target={targetId} | Status={status}");
     }
 
     private static string JoinLines(params string[] lines)

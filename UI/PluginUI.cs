@@ -14,10 +14,35 @@ public sealed class PluginUI
         ("catalog", "魔兽图鉴"),
         ("equipment", "推荐装备"),
         ("combinations", "推荐组合"),
+        ("sequences", "技能序列"),
         ("commands", "快捷指令"),
         ("auto-output", "自动输出"),
         ("settings", "设置"),
         ("debug", "DEBUG"),
+    ];
+
+    private static readonly (uint ActionId, string Name)[] SequenceActions =
+    [
+        (44879, "碎击斩"),
+        (44883, "碎咬斧"),
+        (44885, "裂盾劈"),
+        (44893, "盾牌冲击"),
+        (44890, "释放"),
+        (44891, "最后一击"),
+        (44881, "一号兽笛"),
+        (44892, "二号兽笛"),
+        (44894, "三号兽笛"),
+        (44895, "借用"),
+        (44896, "百兽肤"),
+        (44897, "百虫肤"),
+        (44898, "有翼飞掠"),
+        (44899, "草木播种"),
+        (44900, "水栖波"),
+        (44901, "甲鳞肤"),
+        (44902, "咒具碎魂"),
+        (44903, "死尸净化"),
+        (44904, "声援"),
+        (44905, "鼓劲"),
     ];
 
     private readonly BeastmasterConfiguration configuration;
@@ -27,6 +52,7 @@ public sealed class PluginUI
     private readonly BeastmasterDebugDataService debugDataService;
     private readonly BeastmasterAutoCaptureService autoCaptureService;
     private readonly BeastmasterCatalogSyncService catalogSyncService;
+    private readonly BeastmasterSequenceService sequenceService;
     private string debugQuery = "驯兽";
     private string debugActionId = "44890";
     private string debugResult = "点击按钮读取客户端资料。";
@@ -50,7 +76,8 @@ public sealed class PluginUI
         BeastmasterNavigationService navigationService,
         BeastmasterDebugDataService debugDataService,
         BeastmasterAutoCaptureService autoCaptureService,
-        BeastmasterCatalogSyncService catalogSyncService)
+        BeastmasterCatalogSyncService catalogSyncService,
+        BeastmasterSequenceService sequenceService)
     {
         this.configuration = configuration;
         this.progressService = progressService;
@@ -59,6 +86,7 @@ public sealed class PluginUI
         this.debugDataService = debugDataService;
         this.autoCaptureService = autoCaptureService;
         this.catalogSyncService = catalogSyncService;
+        this.sequenceService = sequenceService;
     }
 
     public void OpenMainWindow()
@@ -157,8 +185,27 @@ public sealed class PluginUI
         {
             autoCaptureService.SetBasicComboEnabled(basicComboEnabled);
         }
-        DrawAdvancedActionToggles();
+        DrawAdvancedActionToggles(compactFinalStrike: true);
         DrawBeastArenaActionToggles();
+
+        ImGui.Spacing();
+        if (ImGui.CollapsingHeader("技能序列##BeastmasterSequence"))
+        {
+            ImGui.Indent();
+            var sequenceEnabled = sequenceService.Enabled;
+            if (ImGui.Checkbox("##overlay-sequence-enabled", ref sequenceEnabled))
+            {
+                sequenceService.SetEnabled(sequenceEnabled);
+            }
+            ImGui.SameLine();
+            DrawSequenceSelector(string.Empty, "##overlay-sequence-selector");
+            ImGui.TextDisabled($"状态：{sequenceService.Status}");
+            if (sequenceService.IsControlling && ImGui.Button("中止技能序列"))
+            {
+                sequenceService.Abort("已手动中止，等待下一次团队倒计时");
+            }
+            ImGui.Unindent();
+        }
 
         if (ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows)
             && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
@@ -247,10 +294,31 @@ public sealed class PluginUI
         if (ImGui.IsItemHovered())
         {
             ImGui.SetTooltip(forceCapture
-                ? "强制捕获：无视目标血量和捕获BUFF；点击关闭捕获"
+                ? "强制捕获：无视目标捕获BUFF，但仍受血量阈值限制；点击关闭捕获"
                 : tryCapture
                     ? "尝试捕获：按血量和捕获BUFF判断；点击切换为强制捕获"
                     : "捕获未开启；点击开启尝试捕获");
+        }
+
+        ImGui.SameLine();
+        var activeAttack = autoCaptureService.ActiveAttack;
+        if (DrawOverlayStatusBadge(
+            "主动",
+            activeAttack
+                ? new Vector4(0.2f, 0.42f, 0.28f, 1f)
+                : new Vector4(0.3f, 0.3f, 0.34f, 1f),
+            activeAttack
+                ? new Vector4(0.45f, 1f, 0.58f, 1f)
+                : new Vector4(0.7f, 0.7f, 0.75f, 1f)))
+        {
+            autoCaptureService.SetActiveAttack(!activeAttack);
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(activeAttack
+                ? "未进战时允许普通 ACR 主动攻击、捕获和使用斗兽塔技能"
+                : "未进战时普通 ACR 不会攻击、捕获或使用斗兽塔技能");
         }
     }
 
@@ -358,7 +426,7 @@ public sealed class PluginUI
 
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip("捕获血量阈值：目标低于此百分比时释放捕获");
+            ImGui.SetTooltip("捕获血量阈值：目标血量小于或等于此百分比时释放捕获");
         }
     }
 
@@ -421,10 +489,11 @@ public sealed class PluginUI
         DrawSidebarButton(MainSections[3]);
         DrawSidebarButton(MainSections[4]);
         DrawSidebarButton(MainSections[5]);
+        DrawSidebarButton(MainSections[6]);
 
         ImGui.Separator();
         DrawSidebarLabel("工具");
-        DrawSidebarButton(MainSections[6]);
+        DrawSidebarButton(MainSections[7]);
 
         if (ImGui.Button("反馈与建议", new Vector2(ImGui.GetContentRegionAvail().X, 30f)))
         {
@@ -435,7 +504,7 @@ public sealed class PluginUI
             });
         }
 
-        DrawSidebarButton(MainSections[7]);
+        DrawSidebarButton(MainSections[8]);
     }
 
     private void DrawSidebarButton((string Key, string Label) section)
@@ -479,6 +548,9 @@ public sealed class PluginUI
                 break;
             case "combinations":
                 DrawRecommendedCombinations();
+                break;
+            case "sequences":
+                DrawSequenceEditor();
                 break;
             case "commands":
                 DrawCommands();
@@ -592,6 +664,145 @@ public sealed class PluginUI
             ImGui.PopTextWrapPos();
         }
         ImGui.EndTooltip();
+    }
+
+    private void DrawSequenceEditor()
+    {
+        ImGui.Text("技能序列");
+        ImGui.TextDisabled("编辑倒计时和战斗步骤；序列不会自动执行，除非在自动输出中启用。");
+        ImGui.Separator();
+
+        var sequences = configuration.Sequences;
+        if (sequences.Count == 0)
+        {
+            sequences.Add(BeastmasterSequenceDefinition.CreateWaterOpener());
+        }
+
+        var selected = Math.Clamp(configuration.SelectedSequenceIndex, 0, sequences.Count - 1);
+        var names = string.Join('\0', sequences.Select(sequence => sequence.Name)) + '\0';
+        if (ImGui.Combo("当前序列", ref selected, names))
+        {
+            configuration.SelectedSequenceIndex = selected;
+            configuration.Save();
+        }
+
+        ImGui.SameLine();
+        var sequenceChat = sequenceService.ChatMessagesEnabled;
+        if (ImGui.Checkbox("默语提示", ref sequenceChat))
+        {
+            sequenceService.SetChatMessagesEnabled(sequenceChat);
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("输出序列启动、技能请求、完成和中止信息；失败重试不会刷屏。");
+        }
+
+        var sequence = sequences[selected];
+        var name = sequence.Name;
+        ImGui.SetNextItemWidth(260f);
+        if (ImGui.InputText("名称", ref name, 80))
+        {
+            sequence.Name = string.IsNullOrWhiteSpace(name) ? "未命名序列" : name;
+            configuration.Save();
+        }
+        var description = sequence.Description;
+        ImGui.SetNextItemWidth(-1f);
+        if (ImGui.InputText("说明", ref description, 200))
+        {
+            sequence.Description = description;
+            configuration.Save();
+        }
+
+        if (ImGui.Button("新建序列"))
+        {
+            sequences.Add(new BeastmasterSequenceDefinition { Name = "新序列", Description = "" });
+            configuration.SelectedSequenceIndex = sequences.Count - 1;
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("复制序列"))
+        {
+            var copy = BeastmasterSequenceDefinition.TryImport(sequence.Export(), out var imported, out _)
+                ? imported!
+                : BeastmasterSequenceDefinition.CreateWaterOpener();
+            copy.Name += " 副本";
+            sequences.Add(copy);
+            configuration.SelectedSequenceIndex = sequences.Count - 1;
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("删除序列") && sequences.Count > 1)
+        {
+            sequences.RemoveAt(selected);
+            configuration.SelectedSequenceIndex = Math.Clamp(selected, 0, sequences.Count - 1);
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("恢复虫队模版"))
+        {
+            sequences[selected] = BeastmasterSequenceDefinition.CreateWaterOpener();
+            sequences[selected].Name = name;
+            configuration.Save();
+        }
+
+        DrawSequenceStepList("倒计时", sequence.CountdownSteps, true);
+        DrawSequenceStepList("进入战斗", sequence.CombatSteps, false);
+
+        if (ImGui.Button("复制导出文本")) ImGui.SetClipboardText(sequence.Export());
+        ImGui.SameLine();
+        if (ImGui.Button("从剪贴板导入"))
+        {
+            if (BeastmasterSequenceDefinition.TryImport(ImGui.GetClipboardText(), out var imported, out var error) && imported != null)
+            {
+                sequences[selected] = imported;
+                configuration.Save();
+            }
+            else debugResult = $"技能序列导入失败：{error}";
+        }
+    }
+
+    private void DrawSequenceStepList(string title, List<BeastmasterSequenceStep> steps, bool countdown)
+    {
+        if (!ImGui.CollapsingHeader($"{title}步骤##sequence-{title}")) return;
+        for (var index = 0; index < steps.Count; index++)
+        {
+            var step = steps[index];
+            ImGui.PushID($"{title}-{index}");
+            ImGui.Text($"{index + 1}.");
+            ImGui.SameLine();
+            if (countdown)
+            {
+                var time = step.TimeSeconds ?? 0f;
+                ImGui.SetNextItemWidth(110f);
+                if (ImGui.InputFloat("时间", ref time, 1f, 5f, "T-%.1f")) step.TimeSeconds = time;
+                ImGui.SameLine();
+            }
+            var actionIndex = Array.FindIndex(SequenceActions, action => action.ActionId == step.ActionId);
+            var actionOptions = string.Join('\0', SequenceActions.Select(action => action.Name)) + '\0';
+            if (actionIndex < 0)
+            {
+                ImGui.TextDisabled($"未知技能 ({step.ActionId})");
+                ImGui.SameLine();
+            }
+            else
+            {
+                ImGui.SetNextItemWidth(180f);
+                if (ImGui.Combo("技能", ref actionIndex, actionOptions))
+                {
+                    step.ActionId = SequenceActions[actionIndex].ActionId;
+                    step.Label = SequenceActions[actionIndex].Name;
+                }
+                ImGui.SameLine();
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("上移") && index > 0) (steps[index - 1], steps[index]) = (steps[index], steps[index - 1]);
+            ImGui.SameLine();
+            if (ImGui.SmallButton("下移") && index < steps.Count - 1) (steps[index + 1], steps[index]) = (steps[index], steps[index + 1]);
+            ImGui.SameLine();
+            if (ImGui.SmallButton("删除")) { steps.RemoveAt(index); ImGui.PopID(); break; }
+            ImGui.PopID();
+        }
+        if (ImGui.Button($"添加{title}步骤")) steps.Add(new(countdown ? 0f : null, 44879, "碎击斩"));
     }
 
     private void DrawQuests()
@@ -1213,13 +1424,20 @@ public sealed class PluginUI
         ImGui.SameLine();
         ImGui.TextDisabled("暂停时保留自动输出总开关，但不执行任何动作");
         ImGui.TextDisabled("仅对当前手动选择的敌对目标生效；无捕获状态时优先捕获，再执行 1→2→3 连击。");
+        var activeAttack = autoCaptureService.ActiveAttack;
+        if (ImGui.Checkbox("主动攻击", ref activeAttack))
+        {
+            autoCaptureService.SetActiveAttack(activeAttack);
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("关闭后，未进战时不攻击、捕获或使用斗兽塔技能");
         var forceCapture = autoCaptureService.ForceCapture;
         if (ImGui.Checkbox("强制捕获", ref forceCapture))
         {
             autoCaptureService.SetForceCapture(forceCapture);
         }
         ImGui.SameLine();
-        ImGui.TextDisabled("尝试捕获开启时，无视目标血量和捕获BUFF");
+        ImGui.TextDisabled("尝试捕获开启时，无视目标捕获BUFF，但仍受血量阈值限制");
         DrawCaptureHpThreshold();
         DrawSettingCheckbox(
             "详细模式",
@@ -1229,6 +1447,9 @@ public sealed class PluginUI
         ImGui.Spacing();
         DrawAdvancedActionToggles();
         DrawBeastArenaActionToggles();
+
+        ImGui.Spacing();
+        DrawSequenceSettings();
 
         ImGui.Spacing();
         ImGui.Text("当前模式");
@@ -1248,7 +1469,7 @@ public sealed class PluginUI
         DrawBeastmasterGaugeGuide();
     }
 
-    private void DrawAdvancedActionToggles()
+    private void DrawAdvancedActionToggles(bool compactFinalStrike = false)
     {
         if (!ImGui.CollapsingHeader("高级技能##BeastmasterAdvancedActions"))
         {
@@ -1319,27 +1540,37 @@ public sealed class PluginUI
             ImGui.SetTooltip("当前没有魔兽时，按兽笛 1→2→3 使用首个可用技能；释放后等待 1 秒确认召唤。");
         }
 
-        var autoFinalStrikeEnabled = configuration.AutoFinalStrikeEnabled;
-        if (ImGui.Checkbox("自动最后一击", ref autoFinalStrikeEnabled))
+        if (compactFinalStrike)
         {
-            configuration.AutoFinalStrikeEnabled = autoFinalStrikeEnabled;
-            configuration.Save();
+            var finalStrikeEnabled = autoCaptureService.FinalStrikeEnabled;
+            if (ImGui.Checkbox("最后一击", ref finalStrikeEnabled))
+            {
+                autoCaptureService.SetFinalStrikeEnabled(finalStrikeEnabled);
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("1、2、3 笛的血量设置在自动输出栏目 - 高级技能中。");
+            }
         }
-        if (ImGui.IsItemHovered())
+        else
         {
-            ImGui.SetTooltip("宝宝血量低于设定百分比时，对当前敌对目标使用最后一击。");
-        }
+            DrawFinalStrikeSettings("1 笛", nameof(configuration.AutoFinalStrikeWhistleOneEnabled), configuration.AutoFinalStrikeWhistleOneEnabled,
+                nameof(configuration.AutoFinalStrikeWhistleOneHpThreshold), configuration.AutoFinalStrikeWhistleOneHpThreshold);
+            DrawFinalStrikeSettings("2 笛", nameof(configuration.AutoFinalStrikeWhistleTwoEnabled), configuration.AutoFinalStrikeWhistleTwoEnabled,
+                nameof(configuration.AutoFinalStrikeWhistleTwoHpThreshold), configuration.AutoFinalStrikeWhistleTwoHpThreshold);
+            DrawFinalStrikeSettings("3 笛", nameof(configuration.AutoFinalStrikeWhistleThreeEnabled), configuration.AutoFinalStrikeWhistleThreeEnabled,
+                nameof(configuration.AutoFinalStrikeWhistleThreeHpThreshold), configuration.AutoFinalStrikeWhistleThreeHpThreshold);
 
-        var finalStrikeThreshold = Math.Clamp(configuration.AutoFinalStrikeHpThreshold, 1f, 100f);
-        ImGui.SetNextItemWidth(150f);
-        if (ImGui.InputFloat("##AutoFinalStrikeThreshold", ref finalStrikeThreshold, 1f, 5f, "%.0f%%"))
-        {
-            configuration.AutoFinalStrikeHpThreshold = Math.Clamp(finalStrikeThreshold, 1f, 100f);
-            configuration.Save();
-        }
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip("自动最后一击的宝宝血量阈值，范围 1%~100%。");
+            var waitForRelease = configuration.AutoFinalStrikeWaitForRelease;
+            if (ImGui.Checkbox("最后一击 · 等待释放", ref waitForRelease))
+            {
+                configuration.AutoFinalStrikeWaitForRelease = waitForRelease;
+                configuration.Save();
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("开启后，仅当当前魔兽的释放技能不可用时，才会使用最后一击；不要求开启自动释放。");
+            }
         }
 
         var releaseEnabled = configuration.AutoReleaseEnabled;
@@ -1366,6 +1597,123 @@ public sealed class PluginUI
         // ImGui.TextDisabled($"状态：{autoCaptureService.WhistleRotationStatus}");
 
         ImGui.Unindent();
+    }
+
+    private void DrawSequenceSettings()
+    {
+        if (!ImGui.CollapsingHeader("技能序列##BeastmasterSequenceSettings"))
+        {
+            return;
+        }
+
+        ImGui.Indent();
+        var enabled = sequenceService.Enabled;
+        if (ImGui.Checkbox("启用技能序列", ref enabled))
+        {
+            sequenceService.SetEnabled(enabled);
+        }
+        DrawSequenceSelector("当前序列", "##settings-sequence-selector");
+        ImGui.TextDisabled($"当前序列：{sequenceService.CurrentSequenceName}");
+        ImGui.TextDisabled($"状态：{sequenceService.Status}");
+        if (sequenceService.IsControlling && ImGui.Button("中止技能序列"))
+        {
+            sequenceService.Abort("已手动中止，等待下一次团队倒计时");
+        }
+        ImGui.Unindent();
+    }
+
+    private void DrawSequenceSelector(string label, string id)
+    {
+        var sequences = configuration.Sequences;
+        if (sequences.Count == 0)
+        {
+            return;
+        }
+
+        var selected = Math.Clamp(configuration.SelectedSequenceIndex, 0, sequences.Count - 1);
+        var names = string.Join('\0', sequences.Select(sequence => sequence.Name)) + '\0';
+        ImGui.SetNextItemWidth(id.Contains("overlay", StringComparison.Ordinal) ? 150f : 220f);
+        if (ImGui.Combo($"{label}{id}", ref selected, names))
+        {
+            configuration.SelectedSequenceIndex = selected;
+            configuration.Save();
+            if (sequenceService.IsControlling)
+            {
+                sequenceService.Abort("已切换序列，等待下一次团队倒计时");
+            }
+        }
+    }
+
+    private void DrawCompactFinalStrikeToggle(string label, string propertyName, bool value)
+    {
+        if (ImGui.Checkbox($"{label}##overlay-{propertyName}", ref value))
+        {
+            SetFinalStrikeEnabled(propertyName, value);
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip($"{label}最后一击；血量阈值请在自动输出栏目设置。");
+        }
+    }
+
+    private void DrawFinalStrikeSettings(
+        string label,
+        string enabledProperty,
+        bool enabled,
+        string thresholdProperty,
+        float threshold)
+    {
+        if (ImGui.Checkbox($"最后一击 · {label}##{enabledProperty}", ref enabled))
+        {
+            SetFinalStrikeEnabled(enabledProperty, enabled);
+        }
+
+        ImGui.SameLine();
+        threshold = Math.Clamp(threshold, 1f, 100f);
+        ImGui.SetNextItemWidth(100f);
+        if (ImGui.InputFloat($"##{thresholdProperty}", ref threshold, 1f, 5f, "%.0f%%"))
+        {
+            SetFinalStrikeThreshold(thresholdProperty, threshold);
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip($"{label}宝宝血量严格低于该阈值时使用最后一击，范围 1%~100%。");
+        }
+    }
+
+    private void SetFinalStrikeEnabled(string propertyName, bool value)
+    {
+        switch (propertyName)
+        {
+            case nameof(configuration.AutoFinalStrikeWhistleOneEnabled):
+                configuration.AutoFinalStrikeWhistleOneEnabled = value;
+                break;
+            case nameof(configuration.AutoFinalStrikeWhistleTwoEnabled):
+                configuration.AutoFinalStrikeWhistleTwoEnabled = value;
+                break;
+            case nameof(configuration.AutoFinalStrikeWhistleThreeEnabled):
+                configuration.AutoFinalStrikeWhistleThreeEnabled = value;
+                break;
+        }
+        configuration.Save();
+    }
+
+    private void SetFinalStrikeThreshold(string propertyName, float value)
+    {
+        value = Math.Clamp(value, 1f, 100f);
+        switch (propertyName)
+        {
+            case nameof(configuration.AutoFinalStrikeWhistleOneHpThreshold):
+                configuration.AutoFinalStrikeWhistleOneHpThreshold = value;
+                break;
+            case nameof(configuration.AutoFinalStrikeWhistleTwoHpThreshold):
+                configuration.AutoFinalStrikeWhistleTwoHpThreshold = value;
+                break;
+            case nameof(configuration.AutoFinalStrikeWhistleThreeHpThreshold):
+                configuration.AutoFinalStrikeWhistleThreeHpThreshold = value;
+                break;
+        }
+        configuration.Save();
     }
 
     private void DrawBeastArenaActionToggles()
@@ -1701,7 +2049,7 @@ public sealed class PluginUI
         DrawDebugActionRow(
             "##DebugCurrentStateType",
             ref debugCurrentStateType,
-            "驯兽师量谱原始数据\0当前目标状态\0当前连击状态\0协力验证数据\0当前角色\0当前位置\0目标捕获判定\0自动输出状态\0",
+            "驯兽师量谱原始数据\0当前目标状态\0当前连击状态\0协力验证数据\0当前角色\0当前位置\0目标捕获判定\0自动输出状态\0技能序列验证数据\0",
             "读取##DebugCurrentState",
             RunDebugCurrentState);
 
@@ -1773,6 +2121,7 @@ public sealed class PluginUI
             5 => debugDataService.GetLocation(),
             6 => debugDataService.GetCaptureCheckDebug(),
             7 => debugDataService.GetAutoOutputConditionDebug(),
+            8 => debugDataService.GetSkillSequenceValidationDebug(),
             _ => "未知当前状态类型。",
         });
     }

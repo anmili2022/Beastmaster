@@ -12,6 +12,8 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
     private readonly BeastmasterCatalogChatTracker catalogChatTracker;
     private readonly BeastmasterAutoCaptureService autoCaptureService;
     private readonly BeastmasterCatalogSyncService catalogSyncService;
+    private readonly BeastmasterCountdownService countdownService;
+    private readonly BeastmasterSequenceService sequenceService;
 
     public string Name => "Beastmaster";
 
@@ -28,11 +30,13 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         catalogSyncService = new BeastmasterCatalogSyncService(progressService);
         catalogSyncService.Start();
         var questService = new BeastmasterQuestService();
-        var debugDataService = new BeastmasterDebugDataService();
+        countdownService = new BeastmasterCountdownService(Configuration);
+        sequenceService = new BeastmasterSequenceService(Configuration, countdownService);
+        var debugDataService = new BeastmasterDebugDataService(countdownService);
         navigationService = new BeastmasterNavigationService(pluginInterface, Configuration);
         catalogChatTracker = new BeastmasterCatalogChatTracker(Configuration, progressService);
-        autoCaptureService = new BeastmasterAutoCaptureService(Configuration);
-        ui = new PluginUI(Configuration, progressService, questService, navigationService, debugDataService, autoCaptureService, catalogSyncService);
+        autoCaptureService = new BeastmasterAutoCaptureService(Configuration, sequenceService);
+        ui = new PluginUI(Configuration, progressService, questService, navigationService, debugDataService, autoCaptureService, catalogSyncService, sequenceService);
 
         DalamudApi.Commands.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -59,6 +63,7 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         DalamudApi.Commands.RemoveHandler(ChineseCommandName);
         catalogChatTracker.Dispose();
         autoCaptureService.Dispose();
+        countdownService.Dispose();
         catalogSyncService.Dispose();
         navigationService.Dispose();
         Configuration.Save();

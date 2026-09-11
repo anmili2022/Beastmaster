@@ -9,7 +9,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 14;
+    public int Version { get; set; } = 17;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -39,6 +39,18 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool AutoReleaseEnabled { get; set; } = true;
     public bool WhistleRotationEnabled { get; set; }
     public bool ForceCaptureEnabled { get; set; }
+    public bool ActiveAttackEnabled { get; set; }
+    public bool AutoFinalStrikeWhistleOneEnabled { get; set; }
+    public bool AutoFinalStrikeWhistleTwoEnabled { get; set; }
+    public bool AutoFinalStrikeWhistleThreeEnabled { get; set; }
+    public float AutoFinalStrikeWhistleOneHpThreshold { get; set; } = 20f;
+    public float AutoFinalStrikeWhistleTwoHpThreshold { get; set; } = 20f;
+    public float AutoFinalStrikeWhistleThreeHpThreshold { get; set; } = 20f;
+    public bool AutoFinalStrikeWaitForRelease { get; set; }
+    public bool WaterOpenerSequenceEnabled { get; set; }
+    public bool SequenceChatMessagesEnabled { get; set; }
+    public int SelectedSequenceIndex { get; set; }
+    public List<BeastmasterSequenceDefinition> Sequences { get; set; } = [];
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
         = new(StringComparer.Ordinal);
 
@@ -46,6 +58,13 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     {
         this.pluginInterface = pluginInterface;
         ProgressByCharacter ??= new Dictionary<string, BeastmasterCharacterProgress>(StringComparer.Ordinal);
+        Sequences ??= [];
+        if (Sequences.Count == 0)
+        {
+            Sequences.Add(BeastmasterSequenceDefinition.CreateWaterOpener());
+            Save();
+        }
+        SelectedSequenceIndex = Math.Clamp(SelectedSequenceIndex, 0, Sequences.Count - 1);
 
         if (Version < 8)
         {
@@ -116,6 +135,42 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             Version = 14;
             Save();
         }
+
+        if (Version < 15)
+        {
+            ActiveAttackEnabled = true;
+            Version = 15;
+            Save();
+        }
+
+        if (Version < 16)
+        {
+            AutoFinalStrikeWhistleOneEnabled = AutoFinalStrikeEnabled;
+            AutoFinalStrikeWhistleTwoEnabled = AutoFinalStrikeEnabled;
+            AutoFinalStrikeWhistleThreeEnabled = AutoFinalStrikeEnabled;
+            AutoFinalStrikeWhistleOneHpThreshold = AutoFinalStrikeHpThreshold;
+            AutoFinalStrikeWhistleTwoHpThreshold = AutoFinalStrikeHpThreshold;
+            AutoFinalStrikeWhistleThreeHpThreshold = AutoFinalStrikeHpThreshold;
+            AutoFinalStrikeWaitForRelease = false;
+            WaterOpenerSequenceEnabled = false;
+            Version = 16;
+            Save();
+        }
+
+        if (Version < 17)
+        {
+            if (!Sequences.Any(sequence => sequence.Name == "测试序列"))
+            {
+                Sequences.Add(BeastmasterSequenceDefinition.CreateTestSequence());
+            }
+
+            Version = 17;
+            Save();
+        }
+
+        AutoFinalStrikeWhistleOneHpThreshold = Math.Clamp(AutoFinalStrikeWhistleOneHpThreshold, 1f, 100f);
+        AutoFinalStrikeWhistleTwoHpThreshold = Math.Clamp(AutoFinalStrikeWhistleTwoHpThreshold, 1f, 100f);
+        AutoFinalStrikeWhistleThreeHpThreshold = Math.Clamp(AutoFinalStrikeWhistleThreeHpThreshold, 1f, 100f);
     }
 
     public void Save()

@@ -33,6 +33,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint CaptureActionId = 44880;
     private const uint CaptureStatusId = 4626;
     private readonly BeastmasterConfiguration configuration;
+    private readonly BeastmasterSequenceService sequenceService;
     private readonly uint smashActionId;
     private readonly uint biteActionId;
     private readonly uint shieldActionId;
@@ -76,9 +77,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     public string WhistleRotationStatus { get; private set; } = "未开启";
 
-    public BeastmasterAutoCaptureService(BeastmasterConfiguration configuration)
+    public BeastmasterAutoCaptureService(
+        BeastmasterConfiguration configuration,
+        BeastmasterSequenceService sequenceService)
     {
         this.configuration = configuration;
+        this.sequenceService = sequenceService;
         // Action and status RowId are language-independent; names differ by client locale.
         smashActionId = SmashActionId;
         biteActionId = BiteActionId;
@@ -96,6 +100,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     public bool ForceCapture => configuration.ForceCaptureEnabled;
 
+    public bool ActiveAttack => configuration.ActiveAttackEnabled;
+
+    public bool FinalStrikeEnabled => configuration.AutoFinalStrikeEnabled;
+
     public bool BasicComboEnabled => configuration.BasicComboEnabled;
 
     public void SetEnabled(bool enabled)
@@ -108,6 +116,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
         else
         {
+            sequenceService.Abort("自动输出已关闭");
             nextActionUtc = DateTime.MinValue;
             nextReleaseAttemptUtc = DateTime.MinValue;
             nextFinalStrikeAttemptUtc = DateTime.MinValue;
@@ -144,12 +153,25 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         configuration.Save();
     }
 
+    public void SetActiveAttack(bool enabled)
+    {
+        configuration.ActiveAttackEnabled = enabled;
+        configuration.Save();
+    }
+
+    public void SetFinalStrikeEnabled(bool enabled)
+    {
+        configuration.AutoFinalStrikeEnabled = enabled;
+        configuration.Save();
+    }
+
     public void SetPaused(bool paused)
     {
         configuration.AutoOutputPaused = paused;
         configuration.Save();
         if (paused)
         {
+            sequenceService.Abort("自动输出已暂停");
             nextActionUtc = DateTime.MinValue;
             nextReleaseAttemptUtc = DateTime.MinValue;
             nextFinalStrikeAttemptUtc = DateTime.MinValue;
@@ -296,6 +318,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (DalamudApi.Condition[ConditionFlag.BetweenAreas])
         {
+            sequenceService.Abort("序列中止：正在切图或传送");
             StatusText = "等待可执行状态";
             NextActionReason = "正在切图或传送";
             return;
@@ -326,6 +349,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (player.ClassJob.RowId != BeastmasterClassJobId)
         {
+            sequenceService.Abort("序列中止：当前职业不是驯兽师");
             StatusText = "请切换为驯兽师";
             NextActionName = "-";
             NextActionReason = "当前职业不是驯兽师";
@@ -335,6 +359,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (player.CurrentHp == 0 || player.IsCasting)
         {
+            if (player.CurrentHp == 0)
+            {
+                sequenceService.Abort("序列中止：角色已死亡");
+            }
             StatusText = "等待可执行状态";
             NextActionReason = player.CurrentHp == 0 ? "角色已死亡" : "角色正在读条";
             return;
@@ -386,7 +414,16 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        if (pendingCooperationActionId == 0
+        if (sequenceService.TryHandle(actionManager, gauge, target, now))
+        {
+            StatusText = sequenceService.Status;
+            NextActionName = "技能序列";
+            NextActionReason = "技能序列正在接管普通 ACR";
+            return;
+        }
+
+        if ((configuration.ActiveAttackEnabled || DalamudApi.Condition[ConditionFlag.InCombat])
+            && pendingCooperationActionId == 0
             && DalamudApi.ClientState.TerritoryType is >= BeastArenaFirstTerritoryType and <= BeastArenaLastTerritoryType
             && TryUseArenaMaintenanceAction(actionManager, player, now))
         {
@@ -444,6 +481,17 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             : hasOtherCapture
                 ? "他人已施加捕获状态"
                 : "未施加捕获状态";
+
+        if (!configuration.ActiveAttackEnabled && !DalamudApi.Condition[ConditionFlag.InCombat])
+        {
+            StatusText = "等待进入战斗";
+            NextActionName = "-";
+            NextActionReason = "主动攻击已关闭，未进战时不攻击或捕获";
+            ResetCaptureState();
+            ResetCooperationState();
+            return;
+        }
+
         if (hasOwnCapture)
         {
             CaptureState = "已确认自身捕获";
@@ -459,7 +507,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             capturePendingUntilUtc = DateTime.MinValue;
         }
 
-        var canCapture = targetHpPercent < configuration.CaptureHpThreshold;
+        var canCapture = targetHpPercent <= configuration.CaptureHpThreshold;
         var capturePending = capturePendingUntilUtc > now;
         if (capturePending)
         {
@@ -496,8 +544,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        if (configuration.AutoFinalStrikeEnabled
-            && TryUseFinalStrike(actionManager, gauge, target.GameObjectId, now))
+        if (TryUseFinalStrike(actionManager, gauge, target.GameObjectId, now))
         {
             return;
         }
@@ -510,7 +557,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (configuration.AutoReleaseEnabled
             && gauge.SummonEntry != null
-            && TryUseReleaseAction(actionManager, target.GameObjectId, now))
+            && TryUseReleaseAction(actionManager, gauge, target.GameObjectId, now))
         {
             return;
         }
@@ -540,7 +587,9 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        if (configuration.AutoCaptureTryCapture && (configuration.ForceCaptureEnabled || (!hasOwnCapture && canCapture)))
+        if (configuration.AutoCaptureTryCapture
+            && canCapture
+            && (configuration.ForceCaptureEnabled || !hasOwnCapture))
         {
             actionId = captureActionId;
         }
@@ -566,8 +615,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         NextActionName = GetActionName(actionId);
         NextActionReason = configuration.AutoCaptureTryCapture && !configuration.ForceCaptureEnabled && !hasOwnCapture && !canCapture
             ? $"目标血量 {targetHpPercent:0.#}% 高于捕获阈值 {configuration.CaptureHpThreshold:0.#}%"
-            : configuration.AutoCaptureTryCapture && configuration.ForceCaptureEnabled
-                ? "强制捕获模式，无视血量和捕获状态"
+            : configuration.AutoCaptureTryCapture && configuration.ForceCaptureEnabled && !canCapture
+                ? $"强制捕获仍受血量阈值限制：目标血量 {targetHpPercent:0.#}% 高于阈值 {configuration.CaptureHpThreshold:0.#}%"
+                : configuration.AutoCaptureTryCapture && configuration.ForceCaptureEnabled
+                    ? "强制捕获模式，无视捕获状态但仍受血量阈值限制"
                 : actionId == BeastmasterUltimateActionId
                 ? "高级技能已开启，技力和兽力满足大招门槛"
             : hasOwnCapture
@@ -578,6 +629,17 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         var availability = BeastmasterActionHelper.GetAvailability(actionId, target.GameObjectId);
         NextActionReason = availability.Reason;
+        if (!availability.CanUse && actionId == captureActionId)
+        {
+            actionId = actionManager->Combo.Timer > 0f && actionManager->Combo.Action == biteActionId && player.Level >= 12
+                ? shieldActionId
+                : actionManager->Combo.Timer > 0f && actionManager->Combo.Action == smashActionId && player.Level >= 2
+                    ? biteActionId
+                    : smashActionId;
+            NextActionName = GetActionName(actionId);
+            availability = BeastmasterActionHelper.GetAvailability(actionId, target.GameObjectId);
+            NextActionReason = "捕获未进入技能范围，回退基础技能；" + availability.Reason;
+        }
         if (!availability.CanUse && actionId != BeastmasterUltimateActionId)
         {
             return;
@@ -612,7 +674,11 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         CaptureState = "未开始";
     }
 
-    private unsafe bool TryUseReleaseAction(ActionManager* actionManager, ulong targetId, DateTime now)
+    private unsafe bool TryUseReleaseAction(
+        ActionManager* actionManager,
+        BeastmasterGaugeSnapshot gauge,
+        ulong targetId,
+        DateTime now)
     {
         if (now < nextReleaseAttemptUtc)
         {
@@ -700,12 +766,26 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         ulong targetId,
         DateTime now)
     {
-        if (gauge.SummonDataId == 0
+        if (!configuration.AutoFinalStrikeEnabled
+            || !TryGetFinalStrikeSettings(gauge.WhistleIndex, out var enabled, out var hpThreshold)
+            || !enabled
+            || gauge.SummonDataId == 0
             || gauge.SummonMaxHp == 0
-            || gauge.SummonHpPercent >= configuration.AutoFinalStrikeHpThreshold
+            || gauge.SummonHpPercent >= hpThreshold
             || now < nextFinalStrikeAttemptUtc)
         {
             return false;
+        }
+
+        if (configuration.AutoFinalStrikeWaitForRelease)
+        {
+            var releaseActionId = actionManager->GetAdjustedActionId(BeastmasterReleaseBaseActionId);
+            var releaseUnavailable = releaseActionId != 0
+                && actionManager->GetActionStatus(ActionType.Action, releaseActionId, targetId) != 0;
+            if (!releaseUnavailable)
+            {
+                return false;
+            }
         }
 
         var actionStatus = actionManager->GetActionStatus(ActionType.Action, FinalStrikeActionId, targetId);
@@ -717,7 +797,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         StatusText = "自动最后一击...";
         NextActionName = GetActionName(FinalStrikeActionId);
-        NextActionReason = $"宝宝血量 {gauge.SummonHpPercent:0.#}% 低于阈值 {configuration.AutoFinalStrikeHpThreshold:0.#}%";
+        NextActionReason = $"{gauge.WhistleIndex} 笛宝宝血量 {gauge.SummonHpPercent:0.#}% 低于阈值 {hpThreshold:0.#}%";
         if (!actionManager->UseAction(ActionType.Action, FinalStrikeActionId, targetId))
         {
             nextFinalStrikeAttemptUtc = now.AddMilliseconds(500);
@@ -728,6 +808,19 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         nextActionUtc = now.AddMilliseconds(700);
         return true;
     }
+
+    private bool TryGetFinalStrikeSettings(byte whistleIndex, out bool enabled, out float hpThreshold)
+    {
+        (enabled, hpThreshold) = whistleIndex switch
+        {
+            1 => (configuration.AutoFinalStrikeWhistleOneEnabled, configuration.AutoFinalStrikeWhistleOneHpThreshold),
+            2 => (configuration.AutoFinalStrikeWhistleTwoEnabled, configuration.AutoFinalStrikeWhistleTwoHpThreshold),
+            3 => (configuration.AutoFinalStrikeWhistleThreeEnabled, configuration.AutoFinalStrikeWhistleThreeHpThreshold),
+            _ => (false, 0f),
+        };
+        return whistleIndex is >= 1 and <= 3;
+    }
+
 
     private unsafe bool TryUseThirdFormAction(
         ActionManager* actionManager,
@@ -1071,9 +1164,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return $"{(configuration.PhysicalThirdFormEnabled ? "万象流转（物理）" : "万象流转（魔法）")}已开启";
         }
 
-        if (configuration.AutoWhistleEnabled || configuration.AutoFinalStrikeEnabled || configuration.AutoReleaseEnabled)
+        var anyFinalStrikeEnabled = configuration.AutoFinalStrikeWhistleOneEnabled
+            || configuration.AutoFinalStrikeWhistleTwoEnabled
+            || configuration.AutoFinalStrikeWhistleThreeEnabled;
+        if (configuration.AutoWhistleEnabled || anyFinalStrikeEnabled || configuration.AutoReleaseEnabled)
         {
-            return $"自动兽笛{(configuration.AutoWhistleEnabled ? "开启" : "关闭")}，最后一击{(configuration.AutoFinalStrikeEnabled ? "开启" : "关闭")}，释放{(configuration.AutoReleaseEnabled ? "开启" : "关闭")}";
+            return $"自动兽笛{(configuration.AutoWhistleEnabled ? "开启" : "关闭")}，最后一击{(anyFinalStrikeEnabled ? "开启" : "关闭")}，释放{(configuration.AutoReleaseEnabled ? "开启" : "关闭")}";
         }
 
         return "高级技能均已关闭";
