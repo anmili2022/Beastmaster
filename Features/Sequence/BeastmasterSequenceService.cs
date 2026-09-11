@@ -26,7 +26,6 @@ public sealed class BeastmasterSequenceService
     private const uint ShieldChargeActionId = 44893;
     private const uint WhistleThreeActionId = 44894;
     private const uint BorrowActionId = 44895;
-    private const uint BeastHideActionId = 44896;
     private const uint DrumActionId = 44905;
 
     private readonly BeastmasterConfiguration configuration;
@@ -34,7 +33,8 @@ public sealed class BeastmasterSequenceService
     private int countdownStep;
     private int combatStep;
     private byte pendingWhistle;
-    private uint pendingAdjustedAction;
+    private uint pendingBorrowedAction;
+    private int pendingBorrowedActionStep = -1;
     private DateTime nextAttemptUtc = DateTime.MinValue;
     private DateTime combatDeadlineUtc = DateTime.MinValue;
     private DateTime stepDeadlineUtc = DateTime.MinValue;
@@ -126,7 +126,8 @@ public sealed class BeastmasterSequenceService
         countdownStep = 0;
         combatStep = 0;
         pendingWhistle = 0;
-        pendingAdjustedAction = 0;
+        pendingBorrowedAction = 0;
+        pendingBorrowedActionStep = -1;
         nextAttemptUtc = DateTime.MinValue;
         combatDeadlineUtc = DateTime.MinValue;
         stepDeadlineUtc = DateTime.MinValue;
@@ -222,7 +223,8 @@ public sealed class BeastmasterSequenceService
         if (DalamudApi.Condition[ConditionFlag.InCombat])
         {
             pendingWhistle = 0;
-            pendingAdjustedAction = 0;
+            pendingBorrowedAction = 0;
+            pendingBorrowedActionStep = -1;
             State = BeastmasterSequenceState.Combat;
             combatStep = 0;
             nextAttemptUtc = now;
@@ -266,16 +268,21 @@ public sealed class BeastmasterSequenceService
             return true;
         }
 
-        if (pendingAdjustedAction != 0)
+        if (pendingBorrowedAction != 0)
         {
-            if (actionManager->GetAdjustedActionId(BeastSkillActionId) == pendingAdjustedAction)
+            if (actionManager->GetAdjustedActionId(BeastSkillActionId) == pendingBorrowedAction)
             {
-                pendingAdjustedAction = 0;
+                var actionName = GetActionName(pendingBorrowedAction);
+                pendingBorrowedAction = 0;
+                pendingBorrowedActionStep = -1;
                 countdownStep++;
+                Status = $"已确认借用技能：{actionName}";
+                PrintChat($"已确认借用技能：{actionName}");
             }
-            else if (MissedCountdownDeadline(countdown.TimeRemaining, sequence, countdownStep))
+            else if (pendingBorrowedActionStep >= 0
+                     && countdown.TimeRemaining <= Math.Abs(sequence.CountdownSteps[pendingBorrowedActionStep].TimeSeconds ?? 0f))
             {
-                Abort("序列中止：借用后百兽肤未就绪");
+                Abort($"序列中止：借用后{GetActionName(pendingBorrowedAction)}未就绪");
             }
             return true;
         }
@@ -352,9 +359,20 @@ public sealed class BeastmasterSequenceService
         }
         else if (baseActionId == BorrowActionId)
         {
-            pendingAdjustedAction = BeastHideActionId;
-            Status = "倒计时：等待百兽肤就绪";
-            PrintChat("已请求借用，等待百兽肤就绪");
+            pendingBorrowedActionStep = FindBorrowedActionStep(sequence, countdownStep + 1);
+            if (pendingBorrowedActionStep >= 0)
+            {
+                pendingBorrowedAction = sequence.CountdownSteps[pendingBorrowedActionStep].ActionId;
+                var actionName = GetActionName(pendingBorrowedAction);
+                Status = $"倒计时：等待{actionName}就绪";
+                PrintChat($"已请求借用，等待{actionName}就绪");
+            }
+            else
+            {
+                PrintChat("已请求倒计时技能：借用");
+                countdownStep++;
+                Status = "倒计时：等待下一步骤";
+            }
         }
         else
         {
@@ -474,6 +492,19 @@ public sealed class BeastmasterSequenceService
             ? Math.Abs(sequence.CountdownSteps[stepIndex + 1].TimeSeconds ?? 0f)
             : 0f;
         return remaining <= deadline;
+    }
+
+    private static int FindBorrowedActionStep(BeastmasterSequenceDefinition sequence, int startIndex)
+    {
+        for (var index = startIndex; index < sequence.CountdownSteps.Count; index++)
+        {
+            if (sequence.CountdownSteps[index].ActionId is >= 44896 and <= 44903)
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private static bool IsTargetAction(uint actionId)

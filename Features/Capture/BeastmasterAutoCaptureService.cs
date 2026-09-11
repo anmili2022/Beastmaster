@@ -17,12 +17,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint PurplePhysicalThirdFormActionId = 44930;
     private const uint WhiteMagicalThirdFormActionId = 44933;
     private const uint PurpleMagicalThirdFormActionId = 44932;
-    private const ushort BeastArenaFirstTerritoryType = 1339;
-    private const ushort BeastArenaLastTerritoryType = 1343;
-    private const uint ProtectedStatusId = 2413;
-    private const uint EnmityUpStatusId = 5586;
-    private const uint AttentionActionId = 46751;
-    private const uint ProvokeActionId = 46750;
     private const uint WhistleOneActionId = 44881;
     private const uint WhistleTwoActionId = 44892;
     private const uint WhistleThreeActionId = 44894;
@@ -34,6 +28,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint CaptureStatusId = 4626;
     private readonly BeastmasterConfiguration configuration;
     private readonly BeastmasterSequenceService sequenceService;
+    private readonly BeastmasterRuleService ruleService;
     private readonly uint smashActionId;
     private readonly uint biteActionId;
     private readonly uint shieldActionId;
@@ -51,7 +46,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private DateTime pendingWhistleUntilUtc = DateTime.MinValue;
     private DateTime nextWhistleAttemptUtc = DateTime.MinValue;
     private DateTime nextFinalStrikeAttemptUtc = DateTime.MinValue;
-    private DateTime nextArenaActionAttemptUtc = DateTime.MinValue;
     private bool reportedMissingData;
     private int whistleRotationStage = -1;
     private bool whistleRotationWaitingForCooldown;
@@ -79,10 +73,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     public BeastmasterAutoCaptureService(
         BeastmasterConfiguration configuration,
-        BeastmasterSequenceService sequenceService)
+        BeastmasterSequenceService sequenceService,
+        BeastmasterRuleService ruleService)
     {
         this.configuration = configuration;
         this.sequenceService = sequenceService;
+        this.ruleService = ruleService;
         // Action and status RowId are language-independent; names differ by client locale.
         smashActionId = SmashActionId;
         biteActionId = BiteActionId;
@@ -414,19 +410,20 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
+        if (ruleService.TryHandle(actionManager, player, target, now))
+        {
+            StatusText = "规则模式执行中...";
+            NextActionName = "规则技能";
+            NextActionReason = ruleService.LastDiagnostic;
+            nextActionUtc = now.AddMilliseconds(700);
+            return;
+        }
+
         if (sequenceService.TryHandle(actionManager, gauge, target, now))
         {
             StatusText = sequenceService.Status;
             NextActionName = "技能序列";
             NextActionReason = "技能序列正在接管普通 ACR";
-            return;
-        }
-
-        if ((configuration.ActiveAttackEnabled || DalamudApi.Condition[ConditionFlag.InCombat])
-            && pendingCooperationActionId == 0
-            && DalamudApi.ClientState.TerritoryType is >= BeastArenaFirstTerritoryType and <= BeastArenaLastTerritoryType
-            && TryUseArenaMaintenanceAction(actionManager, player, now))
-        {
             return;
         }
 
@@ -706,56 +703,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         nextReleaseAttemptUtc = now.AddMilliseconds(500);
-        nextActionUtc = now.AddMilliseconds(700);
-        return true;
-    }
-
-    private unsafe bool TryUseArenaMaintenanceAction(
-        ActionManager* actionManager,
-        IBattleChara player,
-        DateTime now)
-    {
-        if (now < nextArenaActionAttemptUtc)
-        {
-            return false;
-        }
-
-        uint actionId;
-        string reason;
-        if (configuration.ArenaKeepAttentionEnabled
-            && !player.StatusList.Any(status => status.StatusId == ProtectedStatusId))
-        {
-            actionId = AttentionActionId;
-            reason = "自身没有被保护（2413）";
-        }
-        else if (configuration.ArenaKeepProvokeEnabled
-            && !player.StatusList.Any(status => status.StatusId == EnmityUpStatusId))
-        {
-            actionId = ProvokeActionId;
-            reason = "自身没有仇恨上升（5586）";
-        }
-        else
-        {
-            return false;
-        }
-
-        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, 0);
-        if (actionStatus != 0)
-        {
-            nextArenaActionAttemptUtc = now.AddMilliseconds(250);
-            return false;
-        }
-
-        StatusText = "维持斗兽塔技能...";
-        NextActionName = GetActionName(actionId);
-        NextActionReason = reason;
-        if (!actionManager->UseAction(ActionType.Action, actionId, 0))
-        {
-            nextArenaActionAttemptUtc = now.AddMilliseconds(500);
-            return false;
-        }
-
-        nextArenaActionAttemptUtc = now.AddMilliseconds(700);
         nextActionUtc = now.AddMilliseconds(700);
         return true;
     }

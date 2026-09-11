@@ -9,7 +9,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 17;
+    public int Version { get; set; } = 19;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -51,6 +51,10 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool SequenceChatMessagesEnabled { get; set; }
     public int SelectedSequenceIndex { get; set; }
     public List<BeastmasterSequenceDefinition> Sequences { get; set; } = [];
+    public bool RuleModeEnabled { get; set; } = true;
+    public int SelectedRuleSetIndex { get; set; }
+    public int SelectedRuleIndex { get; set; }
+    public List<BeastmasterRuleSetDefinition> RuleSets { get; set; } = [];
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
         = new(StringComparer.Ordinal);
 
@@ -59,6 +63,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         this.pluginInterface = pluginInterface;
         ProgressByCharacter ??= new Dictionary<string, BeastmasterCharacterProgress>(StringComparer.Ordinal);
         Sequences ??= [];
+        RuleSets ??= [];
         if (Sequences.Count == 0)
         {
             Sequences.Add(BeastmasterSequenceDefinition.CreateWaterOpener());
@@ -167,6 +172,60 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             Version = 17;
             Save();
         }
+
+        if (Version < 18)
+        {
+            RuleModeEnabled = true;
+            RuleSets = [BeastmasterRuleSetDefinition.CreateBuiltInArenaRules(
+                ArenaKeepAttentionEnabled,
+                ArenaKeepProvokeEnabled)];
+            Version = 18;
+            Save();
+        }
+
+        if (Version < 19)
+        {
+            var placeholder = RuleSets.Count == 1
+                && RuleSets[0].Name == "默认规则集"
+                && RuleSets[0].Rules.Count == 0;
+            var hasBuiltInArenaRules = RuleSets.Any(ruleSet =>
+                ruleSet.Rules.Any(rule => rule.ConditionType == BeastmasterRuleConditionType.SelfStatus
+                    && rule.StatusCondition == BeastmasterRuleStatusCondition.Missing
+                    && rule.ConditionId == 2413
+                    && rule.ActionId == 46751)
+                && ruleSet.Rules.Any(rule => rule.ConditionType == BeastmasterRuleConditionType.SelfStatus
+                    && rule.StatusCondition == BeastmasterRuleStatusCondition.Missing
+                    && rule.ConditionId == 5586
+                    && rule.ActionId == 46750));
+            if (!hasBuiltInArenaRules)
+            {
+                var builtIn = BeastmasterRuleSetDefinition.CreateBuiltInArenaRules(
+                    ArenaKeepAttentionEnabled,
+                    ArenaKeepProvokeEnabled);
+                if (placeholder) RuleSets[0] = builtIn;
+                else RuleSets.Insert(0, builtIn);
+            }
+
+            RuleModeEnabled = true;
+            Version = 19;
+            Save();
+        }
+
+        if (RuleSets.Count == 0)
+        {
+            RuleSets.Add(BeastmasterRuleSetDefinition.CreateBuiltInArenaRules(
+                ArenaKeepAttentionEnabled,
+                ArenaKeepProvokeEnabled));
+            RuleModeEnabled = true;
+            Save();
+        }
+        foreach (var ruleSet in RuleSets)
+        {
+            ruleSet.TerritoryIds ??= [];
+            ruleSet.Rules ??= [];
+        }
+        SelectedRuleSetIndex = Math.Clamp(SelectedRuleSetIndex, 0, RuleSets.Count - 1);
+        SelectedRuleIndex = Math.Clamp(SelectedRuleIndex, 0, Math.Max(0, RuleSets[SelectedRuleSetIndex].Rules.Count - 1));
 
         AutoFinalStrikeWhistleOneHpThreshold = Math.Clamp(AutoFinalStrikeWhistleOneHpThreshold, 1f, 100f);
         AutoFinalStrikeWhistleTwoHpThreshold = Math.Clamp(AutoFinalStrikeWhistleTwoHpThreshold, 1f, 100f);

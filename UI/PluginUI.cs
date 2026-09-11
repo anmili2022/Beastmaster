@@ -15,6 +15,7 @@ public sealed class PluginUI
         ("equipment", "推荐装备"),
         ("combinations", "推荐组合"),
         ("sequences", "技能序列"),
+        ("rules", "规则模式"),
         ("commands", "快捷指令"),
         ("auto-output", "自动输出"),
         ("settings", "设置"),
@@ -53,6 +54,7 @@ public sealed class PluginUI
     private readonly BeastmasterAutoCaptureService autoCaptureService;
     private readonly BeastmasterCatalogSyncService catalogSyncService;
     private readonly BeastmasterSequenceService sequenceService;
+    private readonly BeastmasterRuleService ruleService;
     private string debugQuery = "驯兽";
     private string debugActionId = "44890";
     private string debugResult = "点击按钮读取客户端资料。";
@@ -68,6 +70,8 @@ public sealed class PluginUI
     private DateTime nextEquipmentRefreshUtc = DateTime.MinValue;
     private readonly Dictionary<string, (uint ItemId, uint EquippedCount, uint InventoryCount, uint ArmoryCount)> equipmentOwnership = new(StringComparer.Ordinal);
     private bool isMainWindowOpen;
+    private int newRuleTerritoryId;
+    private string ruleImportStatus = string.Empty;
 
     public PluginUI(
         BeastmasterConfiguration configuration,
@@ -77,7 +81,8 @@ public sealed class PluginUI
         BeastmasterDebugDataService debugDataService,
         BeastmasterAutoCaptureService autoCaptureService,
         BeastmasterCatalogSyncService catalogSyncService,
-        BeastmasterSequenceService sequenceService)
+        BeastmasterSequenceService sequenceService,
+        BeastmasterRuleService ruleService)
     {
         this.configuration = configuration;
         this.progressService = progressService;
@@ -87,6 +92,7 @@ public sealed class PluginUI
         this.autoCaptureService = autoCaptureService;
         this.catalogSyncService = catalogSyncService;
         this.sequenceService = sequenceService;
+        this.ruleService = ruleService;
     }
 
     public void OpenMainWindow()
@@ -186,7 +192,6 @@ public sealed class PluginUI
             autoCaptureService.SetBasicComboEnabled(basicComboEnabled);
         }
         DrawAdvancedActionToggles(compactFinalStrike: true);
-        DrawBeastArenaActionToggles();
 
         ImGui.Spacing();
         if (ImGui.CollapsingHeader("技能序列##BeastmasterSequence"))
@@ -490,10 +495,11 @@ public sealed class PluginUI
         DrawSidebarButton(MainSections[4]);
         DrawSidebarButton(MainSections[5]);
         DrawSidebarButton(MainSections[6]);
+        DrawSidebarButton(MainSections[7]);
 
         ImGui.Separator();
         DrawSidebarLabel("工具");
-        DrawSidebarButton(MainSections[7]);
+        DrawSidebarButton(MainSections[8]);
 
         if (ImGui.Button("反馈与建议", new Vector2(ImGui.GetContentRegionAvail().X, 30f)))
         {
@@ -504,7 +510,7 @@ public sealed class PluginUI
             });
         }
 
-        DrawSidebarButton(MainSections[8]);
+        DrawSidebarButton(MainSections[9]);
     }
 
     private void DrawSidebarButton((string Key, string Label) section)
@@ -551,6 +557,9 @@ public sealed class PluginUI
                 break;
             case "sequences":
                 DrawSequenceEditor();
+                break;
+            case "rules":
+                DrawRuleEditor();
                 break;
             case "commands":
                 DrawCommands();
@@ -741,7 +750,6 @@ public sealed class PluginUI
         if (ImGui.Button("恢复虫队模版"))
         {
             sequences[selected] = BeastmasterSequenceDefinition.CreateWaterOpener();
-            sequences[selected].Name = name;
             configuration.Save();
         }
 
@@ -803,6 +811,343 @@ public sealed class PluginUI
             ImGui.PopID();
         }
         if (ImGui.Button($"添加{title}步骤")) steps.Add(new(countdown ? 0f : null, 44879, "碎击斩"));
+    }
+
+    private void DrawRuleEditor()
+    {
+        ImGui.Text("规则模式");
+        ImGui.TextDisabled("规则优先于技能序列和普通 ACR；按规则集及规则的显示顺序检查第一条命中项。");
+        ImGui.Separator();
+
+        var enabled = ruleService.Enabled;
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.82f, 0.25f, 1f));
+        if (ImGui.Checkbox("启用规则模式", ref enabled)) ruleService.SetEnabled(enabled);
+        ImGui.PopStyleColor();
+        ImGui.SameLine();
+        ImGui.TextDisabled("技能失败时发送节流默语并回退技能序列或普通 ACR");
+
+        var ruleSets = configuration.RuleSets;
+        if (ruleSets.Count == 0)
+        {
+            ruleSets.Add(new BeastmasterRuleSetDefinition());
+        }
+        configuration.SelectedRuleSetIndex = Math.Clamp(configuration.SelectedRuleSetIndex, 0, ruleSets.Count - 1);
+
+        ImGui.BeginChild("RuleSetList", new Vector2(220f, 0f), true);
+        ImGui.Text("规则集");
+        for (var index = 0; index < ruleSets.Count; index++)
+        {
+            var label = $"{index + 1:00} {(ruleSets[index].Enabled ? "[启用]" : "[停用]")} {ruleSets[index].Name}";
+            if (ImGui.Selectable($"{label}##rule-set-{index}", configuration.SelectedRuleSetIndex == index))
+            {
+                configuration.SelectedRuleSetIndex = index;
+                configuration.SelectedRuleIndex = 0;
+                configuration.Save();
+            }
+        }
+        ImGui.Separator();
+        if (ImGui.Button("新建规则集", new Vector2(-1f, 0f)))
+        {
+            ruleSets.Add(new BeastmasterRuleSetDefinition { Name = "新规则集" });
+            configuration.SelectedRuleSetIndex = ruleSets.Count - 1;
+            configuration.SelectedRuleIndex = 0;
+            configuration.Save();
+        }
+        if (ImGui.Button("复制规则集", new Vector2(-1f, 0f)))
+        {
+            var source = ruleSets[configuration.SelectedRuleSetIndex];
+            if (BeastmasterRuleSetDefinition.TryImport(source.Export(), out var copy, out _) && copy != null)
+            {
+                copy.Name += " 副本";
+                ruleSets.Add(copy);
+                configuration.SelectedRuleSetIndex = ruleSets.Count - 1;
+                configuration.SelectedRuleIndex = 0;
+                configuration.Save();
+            }
+        }
+        if (ImGui.Button("删除规则集", new Vector2(-1f, 0f)) && ruleSets.Count > 1)
+        {
+            ruleSets.RemoveAt(configuration.SelectedRuleSetIndex);
+            configuration.SelectedRuleSetIndex = Math.Clamp(configuration.SelectedRuleSetIndex, 0, ruleSets.Count - 1);
+            configuration.SelectedRuleIndex = 0;
+            configuration.Save();
+        }
+        ImGui.EndChild();
+
+        ImGui.SameLine();
+        ImGui.BeginChild("RuleSetEditor", Vector2.Zero, true);
+        var ruleSetIndex = configuration.SelectedRuleSetIndex;
+        var ruleSet = ruleSets[ruleSetIndex];
+        DrawRuleSetSettings(ruleSet, ruleSetIndex);
+        ImGui.Separator();
+        DrawRuleList(ruleSet);
+        ImGui.Separator();
+        ImGui.Text("最近诊断");
+        ImGui.TextWrapped(ruleService.LastDiagnostic);
+        ImGui.TextDisabled(ruleService.LastDiagnosticUtc == DateTime.MinValue
+            ? "尚无运行记录"
+            : ruleService.LastDiagnosticUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff"));
+        if (!string.IsNullOrWhiteSpace(ruleImportStatus)) ImGui.TextWrapped(ruleImportStatus);
+        ImGui.EndChild();
+    }
+
+    private void DrawRuleSetSettings(BeastmasterRuleSetDefinition ruleSet, int ruleSetIndex)
+    {
+        var enabled = ruleSet.Enabled;
+        if (ImGui.Checkbox("启用当前规则集", ref enabled))
+        {
+            ruleSet.Enabled = enabled;
+            configuration.Save();
+        }
+        var name = ruleSet.Name;
+        ImGui.SetNextItemWidth(260f);
+        if (ImGui.InputText("名称", ref name, 80))
+        {
+            ruleSet.Name = string.IsNullOrWhiteSpace(name) ? "未命名规则集" : name;
+            configuration.Save();
+        }
+        var description = ruleSet.Description;
+        ImGui.SetNextItemWidth(-1f);
+        if (ImGui.InputText("说明", ref description, 200))
+        {
+            ruleSet.Description = description;
+            configuration.Save();
+        }
+
+        var areaMode = (int)ruleSet.AreaMode;
+        ImGui.SetNextItemWidth(180f);
+        if (ImGui.Combo("区域限制", ref areaMode, "所有区域\0仅指定区域\0排除指定区域\0"))
+        {
+            ruleSet.AreaMode = (BeastmasterRuleAreaMode)areaMode;
+            configuration.Save();
+        }
+        if (ruleSet.AreaMode != BeastmasterRuleAreaMode.All)
+        {
+            ImGui.TextDisabled(ruleSet.TerritoryIds.Count == 0 ? "尚未配置 TerritoryType ID" : $"TerritoryType：{string.Join(", ", ruleSet.TerritoryIds)}");
+            ImGui.SetNextItemWidth(130f);
+            if (ImGui.InputInt("新增区域 ID", ref newRuleTerritoryId, 1, 10)) newRuleTerritoryId = Math.Max(0, newRuleTerritoryId);
+            ImGui.SameLine();
+            if (ImGui.Button("添加区域") && newRuleTerritoryId is > 0 and <= ushort.MaxValue)
+            {
+                var territoryId = (ushort)newRuleTerritoryId;
+                if (!ruleSet.TerritoryIds.Contains(territoryId)) ruleSet.TerritoryIds.Add(territoryId);
+                newRuleTerritoryId = 0;
+                configuration.Save();
+            }
+            for (var index = 0; index < ruleSet.TerritoryIds.Count; index++)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"删除 {ruleSet.TerritoryIds[index]}##territory-{index}"))
+                {
+                    ruleSet.TerritoryIds.RemoveAt(index);
+                    configuration.Save();
+                    break;
+                }
+            }
+        }
+
+        var diagnosticMode = (int)ruleSet.DiagnosticMode;
+        ImGui.SetNextItemWidth(180f);
+        if (ImGui.Combo("默语诊断", ref diagnosticMode, "关闭\0仅失败\0完整\0"))
+        {
+            ruleSet.DiagnosticMode = (BeastmasterRuleDiagnosticMode)diagnosticMode;
+            configuration.Save();
+        }
+
+        if (ImGui.Button("复制导出文本"))
+        {
+            ImGui.SetClipboardText(ruleSet.Export());
+            ruleImportStatus = "当前规则集已复制到剪贴板。";
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("从剪贴板导入"))
+        {
+            if (BeastmasterRuleSetDefinition.TryImport(ImGui.GetClipboardText(), out var imported, out var error) && imported != null)
+            {
+                configuration.RuleSets.Add(imported);
+                configuration.SelectedRuleSetIndex = configuration.RuleSets.Count - 1;
+                configuration.SelectedRuleIndex = 0;
+                configuration.Save();
+                ruleImportStatus = $"已新增导入规则集“{imported.Name}”。";
+            }
+            else
+            {
+                ruleImportStatus = $"规则集导入失败：{error}";
+            }
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("上移规则集") && ruleSetIndex > 0)
+        {
+            (configuration.RuleSets[ruleSetIndex - 1], configuration.RuleSets[ruleSetIndex]) = (configuration.RuleSets[ruleSetIndex], configuration.RuleSets[ruleSetIndex - 1]);
+            configuration.SelectedRuleSetIndex--;
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("下移规则集") && ruleSetIndex < configuration.RuleSets.Count - 1)
+        {
+            (configuration.RuleSets[ruleSetIndex + 1], configuration.RuleSets[ruleSetIndex]) = (configuration.RuleSets[ruleSetIndex], configuration.RuleSets[ruleSetIndex + 1]);
+            configuration.SelectedRuleSetIndex++;
+            configuration.Save();
+        }
+    }
+
+    private void DrawRuleList(BeastmasterRuleSetDefinition ruleSet)
+    {
+        ImGui.Text($"规则（{ruleSet.Rules.Count}/100）");
+        if (ImGui.Button("添加规则") && ruleSet.Rules.Count < 100)
+        {
+            ruleSet.Rules.Add(new BeastmasterRuleDefinition());
+            configuration.SelectedRuleIndex = ruleSet.Rules.Count - 1;
+            configuration.Save();
+        }
+
+        if (ruleSet.Rules.Count == 0)
+        {
+            ImGui.TextDisabled("当前规则集没有规则。添加后按从上到下的顺序判断。");
+            return;
+        }
+
+        configuration.SelectedRuleIndex = Math.Clamp(configuration.SelectedRuleIndex, 0, ruleSet.Rules.Count - 1);
+        for (var index = 0; index < ruleSet.Rules.Count; index++)
+        {
+            var rule = ruleSet.Rules[index];
+            var selected = configuration.SelectedRuleIndex == index;
+            if (ImGui.Selectable($"{index + 1:00} {(rule.Enabled ? "[启用]" : "[停用]")} {rule.Name}  |  {GetRuleSummary(rule)}##rule-{index}", selected))
+            {
+                configuration.SelectedRuleIndex = index;
+                configuration.Save();
+            }
+        }
+
+        var selectedIndex = configuration.SelectedRuleIndex;
+        var selectedRule = ruleSet.Rules[selectedIndex];
+        ImGui.Spacing();
+        ImGui.Text($"编辑第 {selectedIndex + 1} 条规则");
+        DrawRuleFields(selectedRule);
+
+        if (ImGui.Button("复制规则") && ruleSet.Rules.Count < 100)
+        {
+            ruleSet.Rules.Insert(selectedIndex + 1, CloneRule(selectedRule));
+            configuration.SelectedRuleIndex++;
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("上移") && selectedIndex > 0)
+        {
+            (ruleSet.Rules[selectedIndex - 1], ruleSet.Rules[selectedIndex]) = (ruleSet.Rules[selectedIndex], ruleSet.Rules[selectedIndex - 1]);
+            configuration.SelectedRuleIndex--;
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("下移") && selectedIndex < ruleSet.Rules.Count - 1)
+        {
+            (ruleSet.Rules[selectedIndex + 1], ruleSet.Rules[selectedIndex]) = (ruleSet.Rules[selectedIndex], ruleSet.Rules[selectedIndex + 1]);
+            configuration.SelectedRuleIndex++;
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("删除规则"))
+        {
+            ruleSet.Rules.RemoveAt(selectedIndex);
+            configuration.SelectedRuleIndex = Math.Clamp(selectedIndex, 0, Math.Max(0, ruleSet.Rules.Count - 1));
+            configuration.Save();
+        }
+    }
+
+    private void DrawRuleFields(BeastmasterRuleDefinition rule)
+    {
+        var enabled = rule.Enabled;
+        if (ImGui.Checkbox("启用##selected-rule", ref enabled))
+        {
+            rule.Enabled = enabled;
+            configuration.Save();
+        }
+        var name = rule.Name;
+        ImGui.SetNextItemWidth(260f);
+        if (ImGui.InputText("规则名称", ref name, 80))
+        {
+            rule.Name = string.IsNullOrWhiteSpace(name) ? "未命名规则" : name;
+            configuration.Save();
+        }
+
+        var conditionType = (int)rule.ConditionType;
+        ImGui.SetNextItemWidth(190f);
+        if (ImGui.Combo("检测类型", ref conditionType, "自身 BUFF\0目标 BUFF\0DataID BUFF\0DataID 读条\0目标读条\0"))
+        {
+            rule.ConditionType = (BeastmasterRuleConditionType)conditionType;
+            configuration.Save();
+        }
+        if (rule.IsStatusRule)
+        {
+            var statusCondition = (int)rule.StatusCondition;
+            ImGui.SetNextItemWidth(190f);
+            if (ImGui.Combo("BUFF 条件", ref statusCondition, "存在\0缺失\0"))
+            {
+                rule.StatusCondition = (BeastmasterRuleStatusCondition)statusCondition;
+                configuration.Save();
+            }
+        }
+        if (rule.RequiresDataId)
+        {
+            var dataId = (int)Math.Min(rule.DataId, int.MaxValue);
+            ImGui.SetNextItemWidth(190f);
+            if (ImGui.InputInt("DataID", ref dataId, 1, 100))
+            {
+                rule.DataId = (uint)Math.Max(0, dataId);
+                configuration.Save();
+            }
+        }
+        var conditionId = (int)Math.Min(rule.ConditionId, int.MaxValue);
+        ImGui.SetNextItemWidth(190f);
+        if (ImGui.InputInt(rule.IsStatusRule ? "BUFFID" : "读条 ID", ref conditionId, 1, 100))
+        {
+            rule.ConditionId = (uint)Math.Max(0, conditionId);
+            configuration.Save();
+        }
+
+        var actionIndex = Array.FindIndex(BeastmasterRuleActions.Supported, action => action.ActionId == rule.ActionId);
+        if (actionIndex < 0) actionIndex = 0;
+        var actionNames = string.Join('\0', BeastmasterRuleActions.Supported.Select(action => $"{action.Name} ({action.ActionId})")) + '\0';
+        ImGui.SetNextItemWidth(260f);
+        if (ImGui.Combo("选择技能", ref actionIndex, actionNames))
+        {
+            rule.ActionId = BeastmasterRuleActions.Supported[actionIndex].ActionId;
+            configuration.Save();
+        }
+
+        if (!rule.TryValidate(out var error)) ImGui.TextColored(new Vector4(1f, 0.4f, 0.3f, 1f), error);
+        ImGui.TextDisabled("目标技能始终对当前手动目标释放；DataID 对象只负责触发。技能失败后回退 ACR。");
+    }
+
+    private static BeastmasterRuleDefinition CloneRule(BeastmasterRuleDefinition source)
+        => new()
+        {
+            Enabled = source.Enabled,
+            Name = source.Name + " 副本",
+            ConditionType = source.ConditionType,
+            StatusCondition = source.StatusCondition,
+            DataId = source.DataId,
+            ConditionId = source.ConditionId,
+            ActionId = source.ActionId,
+        };
+
+    private static string GetRuleSummary(BeastmasterRuleDefinition rule)
+    {
+        var actor = rule.ConditionType switch
+        {
+            BeastmasterRuleConditionType.SelfStatus => "自身",
+            BeastmasterRuleConditionType.TargetStatus => "目标",
+            BeastmasterRuleConditionType.DataIdStatus => $"DataID {rule.DataId}",
+            BeastmasterRuleConditionType.DataIdCast => $"DataID {rule.DataId}",
+            BeastmasterRuleConditionType.TargetCast => "目标",
+            _ => "未知",
+        };
+        var condition = rule.IsStatusRule
+            ? $"{(rule.StatusCondition == BeastmasterRuleStatusCondition.Present ? "存在" : "缺少")} BUFF {rule.ConditionId}"
+            : $"读条 {rule.ConditionId}";
+        var action = BeastmasterRuleActions.Supported.FirstOrDefault(item => item.ActionId == rule.ActionId);
+        return $"{actor}{condition} -> {(string.IsNullOrEmpty(action.Name) ? rule.ActionId.ToString() : action.Name)}";
     }
 
     private void DrawQuests()
@@ -1446,7 +1791,6 @@ public sealed class PluginUI
             configuration.ShowGaugeInOverlay);
         ImGui.Spacing();
         DrawAdvancedActionToggles();
-        DrawBeastArenaActionToggles();
 
         ImGui.Spacing();
         DrawSequenceSettings();
@@ -1714,38 +2058,6 @@ public sealed class PluginUI
                 break;
         }
         configuration.Save();
-    }
-
-    private void DrawBeastArenaActionToggles()
-    {
-        if (!ImGui.CollapsingHeader("斗兽塔技能##BeastArenaActions"))
-        {
-            return;
-        }
-
-        ImGui.Indent();
-        var keepAttentionEnabled = configuration.ArenaKeepAttentionEnabled;
-        if (ImGui.Checkbox("持续吸引（宝宝抗）", ref keepAttentionEnabled))
-        {
-            configuration.ArenaKeepAttentionEnabled = keepAttentionEnabled;
-            configuration.Save();
-        }
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip("仅在区域 1339~1343 生效；自身没有被保护（2413）时使用吸引注意（46751）。");
-        }
-
-        var keepProvokeEnabled = configuration.ArenaKeepProvokeEnabled;
-        if (ImGui.Checkbox("持续挑衅（自己抗）", ref keepProvokeEnabled))
-        {
-            configuration.ArenaKeepProvokeEnabled = keepProvokeEnabled;
-            configuration.Save();
-        }
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip("仅在区域 1339~1343 生效；自身没有仇恨上升（5586）时使用挑衅（46750）。");
-        }
-        ImGui.Unindent();
     }
 
     private void DrawCaptureHpThreshold()

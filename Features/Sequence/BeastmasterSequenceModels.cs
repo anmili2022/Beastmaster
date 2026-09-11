@@ -84,13 +84,12 @@ public sealed class BeastmasterSequenceDefinition
                 new(null, 44905, "鼓劲"),
                 new(null, 44890, "释放"),
                 new(null, 44883, "碎咬斧"),
+                new(null, 44904, "声援"),
                 new(null, 44891, "最后一击"),
-                new(null, 44892, "二号兽笛"),
                 new(null, 44885, "裂盾劈"),
+                new(null, 44892, "二号兽笛"),
                 new(null, 44890, "释放"),
                 new(null, 44894, "三号兽笛"),
-                new(null, 44879, "碎击斩"),
-                new(null, 44890, "释放"),
             ],
         };
 
