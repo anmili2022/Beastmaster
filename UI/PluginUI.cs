@@ -816,7 +816,7 @@ public sealed class PluginUI
     private void DrawRuleEditor()
     {
         ImGui.Text("规则模式");
-        ImGui.TextDisabled("规则优先于技能序列和普通 ACR；按规则集及规则的显示顺序检查第一条命中项。");
+        ImGui.TextDisabled("规则仅在战斗中运行；优先级低于技能序列、高于普通 ACR，并按显示顺序检查第一条命中项。");
         ImGui.Separator();
 
         var enabled = ruleService.Enabled;
@@ -1789,6 +1789,11 @@ public sealed class PluginUI
             "显示悬浮窗中的原因、捕获状态、当前魔兽、量谱和高级技能候选等详细信息。默认关闭。",
             nameof(configuration.ShowGaugeInOverlay),
             configuration.ShowGaugeInOverlay);
+        DrawSettingCheckbox(
+            "自动输出诊断",
+            "普通 ACR 已选技能无法释放时，在聊天栏输出技能名称和具体原因；同类提示每 3 秒最多显示一次。默认关闭。",
+            nameof(configuration.AutoOutputDiagnosticsEnabled),
+            configuration.AutoOutputDiagnosticsEnabled);
         ImGui.Spacing();
         DrawAdvancedActionToggles();
 
@@ -1809,8 +1814,6 @@ public sealed class PluginUI
         ImGui.Spacing();
         DrawBeastmasterGauge();
 
-        ImGui.Spacing();
-        DrawBeastmasterGaugeGuide();
     }
 
     private void DrawAdvancedActionToggles(bool compactFinalStrike = false)
@@ -2119,12 +2122,6 @@ public sealed class PluginUI
         ImGui.TextDisabled($"当前决策：{GetGaugeDecision(snapshot)}");
         ImGui.TextDisabled($"高级技能判断：{autoCaptureService.AdvancedActionStatus}");
 
-        if (ImGui.CollapsingHeader("量谱原始数据##BeastmasterGaugeRaw"))
-        {
-            ImGui.TextDisabled($"Address: 0x{snapshot.Address.ToInt64():X}");
-            ImGui.TextWrapped($"48 bytes：{snapshot.FormatRawBytes()}");
-            ImGui.TextDisabled("字段偏移：技能量 +0x10，魔兽技力 +0x11，当前兽笛 +0x13，御兽之心/兽灵之心 +0x18。");
-        }
     }
 
     private static void DrawCurrentSummon(BeastmasterGaugeSnapshot snapshot)
@@ -2300,6 +2297,9 @@ public sealed class PluginUI
                     break;
                 case nameof(configuration.ShowGaugeInOverlay):
                     configuration.ShowGaugeInOverlay = value;
+                    break;
+                case nameof(configuration.AutoOutputDiagnosticsEnabled):
+                    configuration.AutoOutputDiagnosticsEnabled = value;
                     break;
             }
 

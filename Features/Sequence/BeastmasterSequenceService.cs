@@ -42,6 +42,8 @@ public sealed class BeastmasterSequenceService
     private DateTime lastHandledStartUtc = DateTime.MinValue;
     private DateTime lastChatUtc = DateTime.MinValue;
     private string lastChatMessage = string.Empty;
+    private string combatStepFailure = "尚未尝试";
+    private int combatStepAttempts;
 
     public BeastmasterSequenceService(
         BeastmasterConfiguration configuration,
@@ -116,8 +118,7 @@ public sealed class BeastmasterSequenceService
 
         lastChatMessage = message;
         lastChatUtc = now;
-        var version = GetType().Assembly.GetName().Version?.ToString() ?? "未知版本";
-        DalamudApi.ChatGui.Print($"[驯兽师助手 v{version}] {message}");
+        DalamudApi.ChatGui.Print($"[驯兽师助手 {DateTime.Now:HH:mm:ss}] {message}");
     }
 
     public void Abort(string reason)
@@ -132,6 +133,8 @@ public sealed class BeastmasterSequenceService
         combatDeadlineUtc = DateTime.MinValue;
         stepDeadlineUtc = DateTime.MinValue;
         finalCountdownAttemptDeadlineUtc = DateTime.MinValue;
+        combatStepFailure = "尚未尝试";
+        combatStepAttempts = 0;
         Status = reason;
         PrintChat(reason);
     }
@@ -197,6 +200,7 @@ public sealed class BeastmasterSequenceService
                 combatStep = 0;
                 nextAttemptUtc = DateTime.MinValue;
                 stepDeadlineUtc = now.AddSeconds(8);
+                ResetCombatStepFailure();
                 Status = "战斗序列：碎击斩";
                 PrintChat("已进入战斗，开始执行战斗序列");
                 return true;
@@ -229,6 +233,7 @@ public sealed class BeastmasterSequenceService
             combatStep = 0;
             nextAttemptUtc = now;
             stepDeadlineUtc = now.AddSeconds(8);
+            ResetCombatStepFailure();
             Status = "已进入战斗，开始战斗序列";
             PrintChat("已进入战斗，开始执行战斗序列");
             return true;
@@ -328,6 +333,26 @@ public sealed class BeastmasterSequenceService
         var adjustedActionId = baseActionId is BorrowActionId or BeastSkillActionId
             ? actionManager->GetAdjustedActionId(baseActionId)
             : baseActionId;
+        if (adjustedActionId != 0
+            && BeastmasterActionHelper.TryGetActionLevel(adjustedActionId, out var requiredLevel)
+            && DalamudApi.ObjectTable.LocalPlayer is { } player
+            && player.Level < requiredLevel)
+        {
+            PrintChat($"跳过倒计时步骤：{step.Label}，等级 {player.Level}，技能要求等级 {requiredLevel}");
+            countdownStep++;
+            if (countdownStep >= sequence.CountdownSteps.Count)
+            {
+                State = BeastmasterSequenceState.WaitingForCombat;
+                combatDeadlineUtc = now.AddSeconds(2);
+                Status = "等待进入战斗";
+            }
+            else
+            {
+                Status = "倒计时：等待下一步骤";
+            }
+            return true;
+        }
+
         var requiresTarget = IsTargetAction(baseActionId);
         if (requiresTarget && !IsValidTarget(target))
         {
@@ -413,9 +438,10 @@ public sealed class BeastmasterSequenceService
             return true;
         }
 
+        var step = sequence.CombatSteps[combatStep];
         if (now >= stepDeadlineUtc)
         {
-            Abort($"序列中止：步骤 {combatStep + 1} 超时");
+            Abort($"序列中止：步骤 {combatStep + 1}/{sequence.CombatSteps.Count}「{step.Label}」超时：{combatStepFailure}（重试 {combatStepAttempts} 次）");
             return true;
         }
 
@@ -426,6 +452,11 @@ public sealed class BeastmasterSequenceService
                 pendingWhistle = 0;
                 combatStep++;
                 stepDeadlineUtc = now.AddSeconds(8);
+                ResetCombatStepFailure();
+            }
+            else
+            {
+                combatStepFailure = $"等待 {pendingWhistle} 号兽笛确认，当前兽笛 {gauge.WhistleIndex}";
             }
             return true;
         }
@@ -435,13 +466,13 @@ public sealed class BeastmasterSequenceService
             return true;
         }
 
-        var step = sequence.CombatSteps[combatStep];
         var baseActionId = step.ActionId;
         if (TryGetWhistleIndex(baseActionId, out var requiredWhistle)
             && gauge.WhistleIndex == requiredWhistle)
         {
             combatStep++;
             stepDeadlineUtc = now.AddSeconds(8);
+            ResetCombatStepFailure();
             Status = $"已确认当前为{requiredWhistle}号兽笛，准备下一步骤";
             PrintChat($"已确认当前为{requiredWhistle}号兽笛，跳过重复请求");
             return true;
@@ -458,11 +489,50 @@ public sealed class BeastmasterSequenceService
         }
 
         var targetId = requiresTarget ? target!.GameObjectId : 0UL;
-            Status = $"战斗序列 {combatStep + 1}/{sequence.CombatSteps.Count}：{step.Label}";
-        if (adjustedActionId == 0
-            || actionManager->GetActionStatus(ActionType.Action, adjustedActionId, targetId) != 0
-            || !actionManager->UseAction(ActionType.Action, adjustedActionId, targetId))
+        Status = $"战斗序列 {combatStep + 1}/{sequence.CombatSteps.Count}：{step.Label}";
+        combatStepAttempts++;
+        if (adjustedActionId == 0)
         {
+            combatStepFailure = $"调整后 ActionId 为 0（基础 ActionId {baseActionId}）";
+            nextAttemptUtc = now.AddMilliseconds(100);
+            return true;
+        }
+
+        if (BeastmasterActionHelper.TryGetActionLevel(adjustedActionId, out var requiredLevel)
+            && DalamudApi.ObjectTable.LocalPlayer is { } player
+            && player.Level < requiredLevel)
+        {
+            PrintChat($"跳过战斗步骤：{step.Label}，等级 {player.Level}，技能要求等级 {requiredLevel}");
+            combatStep++;
+            stepDeadlineUtc = now.AddSeconds(8);
+            ResetCombatStepFailure();
+            return true;
+        }
+
+        if (baseActionId == ReleaseActionId
+            && target is not null
+            && !BeastmasterActionHelper.IsSummonInActionRange(
+                target,
+                gauge.SummonEntry?.ReleaseActionId ?? adjustedActionId,
+                out var summonDistance,
+                out var actionRange))
+        {
+            combatStepFailure = $"等待召唤兽进入释放距离（当前 {summonDistance:0.##}/{actionRange:0.##} yalms）";
+            nextAttemptUtc = now.AddMilliseconds(250);
+            return true;
+        }
+
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, adjustedActionId, targetId);
+        if (actionStatus != 0)
+        {
+            combatStepFailure = $"GetActionStatus={actionStatus}（Action {baseActionId}→{adjustedActionId}，目标 {targetId}）";
+            nextAttemptUtc = now.AddMilliseconds(100);
+            return true;
+        }
+
+        if (!actionManager->UseAction(ActionType.Action, adjustedActionId, targetId))
+        {
+            combatStepFailure = $"UseAction 返回 false（Action {baseActionId}→{adjustedActionId}，Status=0，目标 {targetId}）";
             nextAttemptUtc = now.AddMilliseconds(100);
             return true;
         }
@@ -473,17 +543,26 @@ public sealed class BeastmasterSequenceService
         if (baseActionId == WhistleTwoActionId)
         {
             pendingWhistle = 2;
+            combatStepFailure = "等待 2 号兽笛确认";
         }
         else if (baseActionId == WhistleThreeActionId)
         {
             pendingWhistle = 3;
+            combatStepFailure = "等待 3 号兽笛确认";
         }
         else
         {
             combatStep++;
             stepDeadlineUtc = now.AddSeconds(8);
+            ResetCombatStepFailure();
         }
         return true;
+    }
+
+    private void ResetCombatStepFailure()
+    {
+        combatStepFailure = "尚未尝试";
+        combatStepAttempts = 0;
     }
 
     private static bool MissedCountdownDeadline(float remaining, BeastmasterSequenceDefinition sequence, int stepIndex = 0)

@@ -1,5 +1,6 @@
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.ClientState.Conditions;
 using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace Beastmaster;
@@ -28,7 +29,7 @@ public sealed class BeastmasterRuleService
 
     public unsafe bool TryHandle(ActionManager* actionManager, IBattleChara player, IBattleChara? target, DateTime now)
     {
-        if (!Enabled)
+        if (!Enabled || !DalamudApi.Condition[ConditionFlag.InCombat])
         {
             return false;
         }
@@ -54,7 +55,7 @@ public sealed class BeastmasterRuleService
                     continue;
                 }
 
-                return TryExecute(actionManager, ruleSet, rule, ruleIndex, target, matchReason, now);
+                return TryExecute(actionManager, ruleSet, rule, ruleIndex, player, target, matchReason, now);
             }
         }
 
@@ -66,6 +67,7 @@ public sealed class BeastmasterRuleService
         BeastmasterRuleSetDefinition ruleSet,
         BeastmasterRuleDefinition rule,
         int ruleIndex,
+        IBattleChara player,
         IBattleChara? target,
         string matchReason,
         DateTime now)
@@ -86,6 +88,21 @@ public sealed class BeastmasterRuleService
         if (!availability.CanUse)
         {
             Fail(ruleSet, rule, ruleIndex, matchReason, availability.Reason, now);
+            return false;
+        }
+
+        if (target != null
+            && !BeastmasterActionHelper.IsPlayerInActionRange(
+                player,
+                target,
+                availability.ActionId,
+                out var distance,
+                out var actionRange))
+        {
+            var rangeReason = $"等待进入技能射程（当前 {distance:0.##}/{actionRange:0.##} yalms）";
+            Fail(ruleSet, rule, ruleIndex, matchReason,
+                rangeReason,
+                now);
             return false;
         }
 
@@ -209,6 +226,6 @@ public sealed class BeastmasterRuleService
 
         lastChatKey = key;
         lastChatUtc = now;
-        DalamudApi.ChatGui.Print($"[规则模式] {message}");
+        DalamudApi.ChatGui.Print($"[驯兽师助手 {DateTime.Now:HH:mm:ss}] {message}");
     }
 }

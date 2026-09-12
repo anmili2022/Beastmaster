@@ -9,7 +9,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 19;
+    public int Version { get; set; } = 21;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -52,6 +52,8 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public int SelectedSequenceIndex { get; set; }
     public List<BeastmasterSequenceDefinition> Sequences { get; set; } = [];
     public bool RuleModeEnabled { get; set; } = true;
+    public bool AutoOutputDiagnosticsEnabled { get; set; }
+    public bool RangeWaitChatMessagesEnabled { get; set; }
     public int SelectedRuleSetIndex { get; set; }
     public int SelectedRuleIndex { get; set; }
     public List<BeastmasterRuleSetDefinition> RuleSets { get; set; } = [];
@@ -208,6 +210,20 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
 
             RuleModeEnabled = true;
             Version = 19;
+            Save();
+        }
+
+        if (Version < 20)
+        {
+            RangeWaitChatMessagesEnabled = false;
+            Version = 20;
+            Save();
+        }
+
+        if (Version < 21)
+        {
+            AutoOutputDiagnosticsEnabled = RangeWaitChatMessagesEnabled;
+            Version = 21;
             Save();
         }
 
