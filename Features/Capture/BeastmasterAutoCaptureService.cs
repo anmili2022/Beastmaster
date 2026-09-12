@@ -13,6 +13,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint BeastmasterUltimateActionId = 47093;
     private const uint BeastmasterReleaseBaseActionId = 44890;
     private const uint DrumActionId = 44905;
+    private const uint CheerActionId = 44904;
     private const uint WhitePhysicalThirdFormActionId = 44931;
     private const uint PurplePhysicalThirdFormActionId = 44930;
     private const uint WhiteMagicalThirdFormActionId = 44933;
@@ -47,6 +48,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private DateTime pendingWhistleUntilUtc = DateTime.MinValue;
     private DateTime nextWhistleAttemptUtc = DateTime.MinValue;
     private DateTime nextFinalStrikeAttemptUtc = DateTime.MinValue;
+    private DateTime resurrectionProtectionUntilUtc = DateTime.MinValue;
+    private bool playerWasDead;
     private bool reportedMissingData;
     private int whistleRotationStage = -1;
     private bool whistleRotationWaitingForCooldown;
@@ -417,14 +420,40 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        if (player.CurrentHp == 0 || player.IsCasting)
+        if (player.CurrentHp == 0)
         {
-            if (player.CurrentHp == 0)
-            {
-                sequenceService.Abort("序列中止：角色已死亡");
-            }
+            playerWasDead = true;
+            resurrectionProtectionUntilUtc = DateTime.MinValue;
+            sequenceService.Abort("序列中止：角色已死亡");
             StatusText = "等待可执行状态";
-            NextActionReason = player.CurrentHp == 0 ? "角色已死亡" : "角色正在读条";
+            NextActionReason = "角色已死亡";
+            return;
+        }
+
+        if (playerWasDead)
+        {
+            playerWasDead = false;
+            resurrectionProtectionUntilUtc = now.AddSeconds(3);
+            nextActionUtc = DateTime.MinValue;
+            nextReleaseAttemptUtc = DateTime.MinValue;
+            nextFinalStrikeAttemptUtc = DateTime.MinValue;
+            ResetCaptureState();
+            ResetCooperationState();
+            ResetAutoWhistle();
+        }
+
+        if (now < resurrectionProtectionUntilUtc)
+        {
+            StatusText = "复活保护中";
+            NextActionName = "-";
+            NextActionReason = $"复活后等待 {(resurrectionProtectionUntilUtc - now).TotalSeconds:0.0} 秒";
+            return;
+        }
+
+        if (player.IsCasting)
+        {
+            StatusText = "等待可执行状态";
+            NextActionReason = "角色正在读条";
             return;
         }
 
@@ -644,20 +673,34 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             }
         }
 
+        if (configuration.AutoReleaseEnabled
+            && gauge.SummonEntry != null
+            && TryUseReleaseAction(actionManager, gauge, target, now))
+        {
+            return;
+        }
+
         if (TryUseFinalStrike(actionManager, gauge, target.GameObjectId, now))
+        {
+            return;
+        }
+
+        if (configuration.AutoDrumEnabled
+            && (gauge.BeastHeartStacks == 0 || IsThirdFormEnabled)
+            && TryUseEnabledSelfAction(actionManager, DrumActionId, "鼓劲", now))
+        {
+            return;
+        }
+
+        if (configuration.AutoCheerEnabled
+            && (gauge.BeastSoulStacks == 0 || IsThirdFormEnabled)
+            && TryUseEnabledSelfAction(actionManager, CheerActionId, "声援", now))
         {
             return;
         }
 
         if ((configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
             && TryUseThirdFormAction(actionManager, gauge, target.GameObjectId, now))
-        {
-            return;
-        }
-
-        if (configuration.AutoReleaseEnabled
-            && gauge.SummonEntry != null
-            && TryUseReleaseAction(actionManager, gauge, target, now))
         {
             return;
         }
@@ -842,6 +885,36 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         capturePendingUntilUtc = DateTime.MinValue;
         CaptureState = "未开始";
     }
+
+    private unsafe bool TryUseEnabledSelfAction(
+        ActionManager* actionManager,
+        uint actionId,
+        string actionName,
+        DateTime now)
+    {
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, 0);
+        if (actionStatus != 0)
+        {
+            ReportAutoOutputDiagnostic(actionName, $"技能系统状态码 {actionStatus}", $"status-{actionStatus}");
+            return false;
+        }
+
+        StatusText = $"自动使用{actionName}...";
+        NextActionName = actionName;
+        NextActionReason = "高级技能已就绪";
+        if (!actionManager->UseAction(ActionType.Action, actionId, 0))
+        {
+            ReportAutoOutputDiagnostic(actionName, "UseAction 返回 false", "use-action-false");
+            return false;
+        }
+
+        ReportAutoOutputSuccess(actionName, actionId);
+        nextActionUtc = now.AddMilliseconds(700);
+        return true;
+    }
+
+    private bool IsThirdFormEnabled
+        => configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled;
 
     private unsafe void EmitAutoOutputDiagnosticSummary(
         ActionManager* actionManager,

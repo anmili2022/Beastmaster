@@ -9,7 +9,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 22;
+    public int Version { get; set; } = 25;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -26,6 +26,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool BasicComboEnabled { get; set; } = true;
     public float CaptureHpThreshold { get; set; } = 80f;
     public bool ShowGaugeInOverlay { get; set; }
+    public bool OverlayThreeColumnMode { get; set; }
     public bool AdvancedActionsEnabled { get; set; }
     public bool BeastHeartCooperationEnabled { get; set; }
     public bool BeastSoulCooperationEnabled { get; set; }
@@ -37,6 +38,8 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool ArenaKeepAttentionEnabled { get; set; }
     public bool ArenaKeepProvokeEnabled { get; set; }
     public bool AutoReleaseEnabled { get; set; } = true;
+    public bool AutoDrumEnabled { get; set; }
+    public bool AutoCheerEnabled { get; set; }
     public bool WhistleRotationEnabled { get; set; }
     public bool ForceCaptureEnabled { get; set; }
     public bool ActiveAttackEnabled { get; set; }
@@ -52,6 +55,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public int SelectedSequenceIndex { get; set; }
     public List<BeastmasterSequenceDefinition> Sequences { get; set; } = [];
     public bool RuleModeEnabled { get; set; } = true;
+    public bool RuleDiagnosticsEnabled { get; set; }
     public bool AutoOutputDiagnosticsEnabled { get; set; }
     public bool RangeWaitChatMessagesEnabled { get; set; }
     public int SelectedRuleSetIndex { get; set; }
@@ -230,6 +234,28 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         if (Version < 22)
         {
             Version = 22;
+            Save();
+        }
+
+        if (Version < 23)
+        {
+            AutoDrumEnabled = false;
+            AutoCheerEnabled = false;
+            Version = 23;
+            Save();
+        }
+
+        if (Version < 24)
+        {
+            RuleDiagnosticsEnabled = false;
+            Version = 24;
+            Save();
+        }
+
+        if (Version < 25)
+        {
+            OverlayThreeColumnMode = false;
+            Version = 25;
             Save();
         }
 

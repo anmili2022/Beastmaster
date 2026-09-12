@@ -20,6 +20,7 @@ public sealed class PluginUI
         ("auto-output", "自动输出"),
         ("settings", "设置"),
         ("debug", "DEBUG"),
+        ("arena-navigation", "前往斗兽塔"),
     ];
 
     private static readonly (uint ActionId, string Name)[] SequenceActions =
@@ -65,7 +66,7 @@ public sealed class PluginUI
     private DateTime nextQuestStatusRefreshUtc = DateTime.MinValue;
     private DateTime nextGaugeRefreshUtc = DateTime.MinValue;
     private BeastmasterGaugeSnapshot gaugeSnapshot = BeastmasterGaugeSnapshot.Unavailable("等待读取");
-    private bool autoOutputCollapsed;
+    private int autoOutputCollapseState;
     private int selectedEquipmentSet;
     private int selectedBattleLogIndex;
     private DateTime nextEquipmentRefreshUtc = DateTime.MinValue;
@@ -157,7 +158,7 @@ public sealed class PluginUI
             isMainWindowOpen = true;
         }
 
-        if (autoOutputCollapsed)
+        if (autoOutputCollapseState == 2)
         {
             ImGui.End();
             return;
@@ -165,39 +166,46 @@ public sealed class PluginUI
 
         ImGui.Separator();
         ImGui.TextColored(new Vector4(0.35f, 0.85f, 0.55f, 1f), autoCaptureService.StatusText);
-        ImGui.Text($"下一个技能：{autoCaptureService.NextActionName}");
-        if (configuration.ShowGaugeInOverlay && !string.IsNullOrWhiteSpace(autoCaptureService.NextActionReason))
+        if (configuration.ShowGaugeInOverlay)
         {
-            ImGui.TextDisabled($"原因：{autoCaptureService.NextActionReason}");
+            ImGui.Text($"下一个技能：{autoCaptureService.NextActionName}");
+            if (!string.IsNullOrWhiteSpace(autoCaptureService.NextActionReason))
+            {
+                ImGui.TextDisabled($"原因：{autoCaptureService.NextActionReason}");
+            }
         }
         if (configuration.ShowGaugeInOverlay)
         {
             DrawOverlayGaugeSummary();
         }
-        DrawOverlayTargetStatus();
+        if (configuration.ShowGaugeInOverlay)
+        {
+            DrawOverlayTargetStatus();
+        }
         if (configuration.ShowGaugeInOverlay)
         {
             DrawOverlayAdvancedCandidates();
         }
         ImGui.Separator();
         var tryCapture = autoCaptureService.TryCapture;
-        if (ImGui.Checkbox("尝试捕获", ref tryCapture))
+        if (ImGui.Checkbox("捕获阈值", ref tryCapture))
         {
             autoCaptureService.SetTryCapture(tryCapture);
         }
         ImGui.SameLine();
         DrawCompactCaptureHpThreshold();
-        var basicComboEnabled = autoCaptureService.BasicComboEnabled;
-        if (ImGui.Checkbox("基础技能（1→2→3）", ref basicComboEnabled))
+        if (configuration.ShowGaugeInOverlay)
         {
-            autoCaptureService.SetBasicComboEnabled(basicComboEnabled);
+            var basicComboEnabled = autoCaptureService.BasicComboEnabled;
+            if (ImGui.Checkbox("基础技能（1→2→3）", ref basicComboEnabled))
+            {
+                autoCaptureService.SetBasicComboEnabled(basicComboEnabled);
+            }
         }
-        DrawAdvancedActionToggles(compactFinalStrike: true);
-
-        ImGui.Spacing();
-        if (ImGui.CollapsingHeader("技能序列##BeastmasterSequence"))
+        if (autoOutputCollapseState == 0)
         {
-            ImGui.Indent();
+            DrawAdvancedActionToggles(compactFinalStrike: true);
+
             var sequenceEnabled = sequenceService.Enabled;
             if (ImGui.Checkbox("##overlay-sequence-enabled", ref sequenceEnabled))
             {
@@ -210,7 +218,6 @@ public sealed class PluginUI
             {
                 sequenceService.Abort("已手动中止，等待下一次团队倒计时");
             }
-            ImGui.Unindent();
         }
 
         if (ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows)
@@ -233,12 +240,17 @@ public sealed class PluginUI
 
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip(autoOutputCollapsed ? "左键展开悬浮窗" : "左键折叠悬浮窗");
+            ImGui.SetTooltip(autoOutputCollapseState switch
+            {
+                0 => "左键半折叠：隐藏高级技能按钮和技能序列",
+                1 => "左键完全折叠悬浮窗",
+                _ => "左键展开悬浮窗",
+            });
         }
 
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
         {
-            autoOutputCollapsed = !autoOutputCollapsed;
+            autoOutputCollapseState = (autoOutputCollapseState + 1) % 3;
         }
 
         ImGui.SameLine();
@@ -422,8 +434,8 @@ public sealed class PluginUI
     private void DrawCompactCaptureHpThreshold()
     {
         var threshold = Math.Clamp(configuration.CaptureHpThreshold, 1f, 100f);
-        ImGui.SetNextItemWidth(120f);
-        if (ImGui.InputFloat("##overlay-capture-threshold", ref threshold, 1f, 5f, "%.0f%%"))
+        ImGui.SetNextItemWidth(70f);
+        if (ImGui.InputFloat("##overlay-capture-threshold", ref threshold, 0f, 0f, "%.0f%%"))
         {
             threshold = Math.Clamp(threshold, 1f, 100f);
             configuration.CaptureHpThreshold = threshold;
@@ -512,6 +524,7 @@ public sealed class PluginUI
         }
 
         DrawSidebarButton(MainSections[9]);
+        DrawSidebarButton(MainSections[10]);
     }
 
     private void DrawSidebarButton((string Key, string Label) section)
@@ -538,6 +551,29 @@ public sealed class PluginUI
     {
         ImGui.Spacing();
         ImGui.TextDisabled(label);
+    }
+
+    private void DrawArenaNavigation()
+    {
+        ImGui.Text("前往斗兽塔");
+        ImGui.TextDisabled("自动导航至黑衣森林中央林区的斗兽塔入口位置。");
+        ImGui.Separator();
+        ImGui.Text("类型：当前位置");
+        ImGui.TextDisabled("TerritoryType: 148");
+        ImGui.TextDisabled("区域：黑衣森林中央林区");
+        ImGui.TextDisabled("Map.RowId: 4");
+        ImGui.TextDisabled("世界坐标：X=24.238, Y=-6.003, Z=65.809");
+        if (ImGui.Button("开始导航##arena-navigation-start"))
+        {
+            navigationService.Navigate(new BeastmasterQuestLocation(
+                148,
+                4,
+                new Vector3(24.238f, -6.003f, 65.809f),
+                "黑衣森林中央林区",
+                "斗兽塔"));
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("需要 vnavmesh；跨区需要 Lifestream");
     }
 
     private void DrawContent()
@@ -573,6 +609,9 @@ public sealed class PluginUI
                 break;
             case "debug":
                 DrawDebug();
+                break;
+            case "arena-navigation":
+                DrawArenaNavigation();
                 break;
             default:
                 configuration.SelectedMainSection = "quests";
@@ -698,7 +737,7 @@ public sealed class PluginUI
 
         ImGui.SameLine();
         var sequenceChat = sequenceService.ChatMessagesEnabled;
-        if (ImGui.Checkbox("默语提示", ref sequenceChat))
+        if (ImGui.Checkbox("序列诊断", ref sequenceChat))
         {
             sequenceService.SetChatMessagesEnabled(sequenceChat);
         }
@@ -824,8 +863,16 @@ public sealed class PluginUI
         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.82f, 0.25f, 1f));
         if (ImGui.Checkbox("启用规则模式", ref enabled)) ruleService.SetEnabled(enabled);
         ImGui.PopStyleColor();
-        ImGui.SameLine();
-        ImGui.TextDisabled("技能失败时发送节流默语并回退技能序列或普通 ACR");
+        var diagnosticsEnabled = configuration.RuleDiagnosticsEnabled;
+        if (ImGui.Checkbox("规则诊断", ref diagnosticsEnabled))
+        {
+            configuration.RuleDiagnosticsEnabled = diagnosticsEnabled;
+            configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("开启后按当前规则集的诊断级别输出规则成功或失败信息；默认关闭。");
+        }
 
         var ruleSets = configuration.RuleSets;
         if (ruleSets.Count == 0)
@@ -949,7 +996,7 @@ public sealed class PluginUI
 
         var diagnosticMode = (int)ruleSet.DiagnosticMode;
         ImGui.SetNextItemWidth(180f);
-        if (ImGui.Combo("默语诊断", ref diagnosticMode, "关闭\0仅失败\0完整\0"))
+        if (ImGui.Combo("规则诊断级别", ref diagnosticMode, "关闭\0仅失败\0完整\0"))
         {
             ruleSet.DiagnosticMode = (BeastmasterRuleDiagnosticMode)diagnosticMode;
             configuration.Save();
@@ -1791,8 +1838,14 @@ public sealed class PluginUI
             nameof(configuration.ShowGaugeInOverlay),
             configuration.ShowGaugeInOverlay);
         DrawAutoOutputDiagnosticsSettings();
+        DrawSettingCheckbox(
+            "悬浮窗三列模式",
+            "将悬浮窗高级技能按钮排列为三列。默认关闭。",
+            nameof(configuration.OverlayThreeColumnMode),
+            configuration.OverlayThreeColumnMode);
         ImGui.Spacing();
         DrawAdvancedActionToggles();
+        ImGui.TextDisabled("优先级：协作二段 → 释放 → 最后一击 → 鼓劲 → 声援 → 万象流转 → 协作一段 → 捕获 → 基础技能");
 
         ImGui.Spacing();
         DrawSequenceSettings();
@@ -1851,12 +1904,103 @@ public sealed class PluginUI
 
     private void DrawAdvancedActionToggles(bool compactFinalStrike = false)
     {
-        if (!ImGui.CollapsingHeader("高级技能##BeastmasterAdvancedActions"))
+        if (!compactFinalStrike && !ImGui.CollapsingHeader("高级技能##BeastmasterAdvancedActions"))
         {
             return;
         }
 
-        ImGui.Indent();
+        if (!compactFinalStrike) ImGui.Indent();
+        if (compactFinalStrike)
+        {
+            if (configuration.OverlayThreeColumnMode)
+            {
+                var threeColumn = 0;
+                DrawOverlayAdvancedToggle("御兽协作", configuration.BeastHeartCooperationEnabled, () => ToggleCooperation(true), "御兽协作（黄豆）", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("兽灵协作", configuration.BeastSoulCooperationEnabled, () => ToggleCooperation(false), "兽灵协作（蓝豆）", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("鼓劲", configuration.AutoDrumEnabled, () => ToggleBoolean(nameof(configuration.AutoDrumEnabled)), "鼓劲 · 好了就放", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("万象·物理", configuration.PhysicalThirdFormEnabled, () => ToggleThirdForm(true), "万象流转（物理）", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("万象·魔法", configuration.MagicalThirdFormEnabled, () => ToggleThirdForm(false), "万象流转（魔法）", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("声援", configuration.AutoCheerEnabled, () => ToggleBoolean(nameof(configuration.AutoCheerEnabled)), "声援 · 好了就放", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("自动兽笛", configuration.AutoWhistleEnabled, () => ToggleBoolean(nameof(configuration.AutoWhistleEnabled)), "自动兽笛", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("最后一击", configuration.AutoFinalStrikeEnabled, () => autoCaptureService.SetFinalStrikeEnabled(!configuration.AutoFinalStrikeEnabled), "最后一击", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("释放", configuration.AutoReleaseEnabled, () => ToggleBoolean(nameof(configuration.AutoReleaseEnabled)), "释放 · 好了就放", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("持续吸引", IsArenaRuleEnabled(46751, 2413), () => ToggleArenaRule(46751, 2413), "持续吸引", ref threeColumn, columnCount: 3, yellowWhenEnabled: true);
+                DrawOverlayAdvancedToggle("持续挑衅", IsArenaRuleEnabled(46750, 5586), () => ToggleArenaRule(46750, 5586), "持续挑衅", ref threeColumn, columnCount: 3, yellowWhenEnabled: true);
+                DrawOverlayAdvancedPlaceholder("待定", ref threeColumn, columnCount: 3);
+                return;
+            }
+
+            var column = 0;
+            DrawOverlayAdvancedToggle("御兽协作", configuration.BeastHeartCooperationEnabled,
+                () =>
+                {
+                    configuration.BeastHeartCooperationEnabled = !configuration.BeastHeartCooperationEnabled;
+                    if (configuration.BeastHeartCooperationEnabled) configuration.BeastSoulCooperationEnabled = false;
+                    configuration.Save();
+                }, "御兽协作（黄豆）", ref column);
+            DrawOverlayAdvancedToggle("兽灵协作", configuration.BeastSoulCooperationEnabled,
+                () =>
+                {
+                    configuration.BeastSoulCooperationEnabled = !configuration.BeastSoulCooperationEnabled;
+                    if (configuration.BeastSoulCooperationEnabled) configuration.BeastHeartCooperationEnabled = false;
+                    configuration.Save();
+                }, "兽灵协作（蓝豆）", ref column);
+            DrawOverlayAdvancedToggle("万象·物理", configuration.PhysicalThirdFormEnabled,
+                () =>
+                {
+                    configuration.PhysicalThirdFormEnabled = !configuration.PhysicalThirdFormEnabled;
+                    if (configuration.PhysicalThirdFormEnabled) configuration.MagicalThirdFormEnabled = false;
+                    configuration.Save();
+                }, "万象流转（物理）", ref column);
+            DrawOverlayAdvancedToggle("万象·魔法", configuration.MagicalThirdFormEnabled,
+                () =>
+                {
+                    configuration.MagicalThirdFormEnabled = !configuration.MagicalThirdFormEnabled;
+                    if (configuration.MagicalThirdFormEnabled) configuration.PhysicalThirdFormEnabled = false;
+                    configuration.Save();
+                }, "万象流转（魔法）", ref column);
+            DrawOverlayAdvancedToggle("鼓劲", configuration.AutoDrumEnabled,
+                () =>
+                {
+                    configuration.AutoDrumEnabled = !configuration.AutoDrumEnabled;
+                    configuration.Save();
+                }, "鼓劲 · 好了就放：御兽之心为 0 时正常判断；御兽之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用鼓劲（44905）。", ref column);
+            DrawOverlayAdvancedToggle("声援", configuration.AutoCheerEnabled,
+                () =>
+                {
+                    configuration.AutoCheerEnabled = !configuration.AutoCheerEnabled;
+                    configuration.Save();
+                }, "声援 · 好了就放：兽灵之心为 0 时正常判断；兽灵之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用声援（44904）。", ref column);
+            DrawOverlayAdvancedToggle("自动兽笛", configuration.AutoWhistleEnabled,
+                () =>
+                {
+                    configuration.AutoWhistleEnabled = !configuration.AutoWhistleEnabled;
+                    configuration.Save();
+                }, "当前没有魔兽时，按兽笛 1→2→3 使用首个可用技能；请求后等待 1 秒确认召唤，避免连续误用下一支兽笛。", ref column);
+            DrawOverlayAdvancedPlaceholder("待定", ref column);
+            DrawOverlayAdvancedToggle("释放", configuration.AutoReleaseEnabled,
+                () =>
+                {
+                    configuration.AutoReleaseEnabled = !configuration.AutoReleaseEnabled;
+                    configuration.Save();
+                }, "释放 · 好了就放：技能系统允许且召唤兽进入释放距离时自动使用释放。", ref column);
+            DrawOverlayAdvancedToggle("最后一击", configuration.AutoFinalStrikeEnabled,
+                () => autoCaptureService.SetFinalStrikeEnabled(!configuration.AutoFinalStrikeEnabled),
+                "最后一击总开关。1、2、3 笛独立开关和宝宝血量阈值请在自动输出页面设置；开启“等待释放”时，会等待当前魔兽先使用释放。",
+                ref column);
+            DrawOverlayAdvancedToggle("持续吸引", IsArenaRuleEnabled(46751, 2413),
+                () => ToggleArenaRule(46751, 2413),
+                "切换规则模式内的持续吸引规则，仅在斗兽塔区域 1339~1343 生效。",
+                ref column,
+                yellowWhenEnabled: true);
+            DrawOverlayAdvancedToggle("持续挑衅", IsArenaRuleEnabled(46750, 5586),
+                () => ToggleArenaRule(46750, 5586),
+                "切换规则模式内的持续挑衅规则，仅在斗兽塔区域 1339~1343 生效。",
+                ref column,
+                yellowWhenEnabled: true);
+            return;
+        }
+
         var beastHeartEnabled = configuration.BeastHeartCooperationEnabled;
         if (ImGui.Checkbox("御兽协作（黄豆）", ref beastHeartEnabled))
         {
@@ -1920,6 +2064,9 @@ public sealed class PluginUI
             ImGui.SetTooltip("当前没有魔兽时，按兽笛 1→2→3 使用首个可用技能；释放后等待 1 秒确认召唤。");
         }
 
+        DrawCompactSettingCheckbox("鼓劲", "鼓劲 · 好了就放：御兽之心为 0 时正常判断；御兽之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用鼓劲（44905）。", nameof(configuration.AutoDrumEnabled), configuration.AutoDrumEnabled);
+        DrawCompactSettingCheckbox("声援", "声援 · 好了就放：兽灵之心为 0 时正常判断；兽灵之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用声援（44904）。", nameof(configuration.AutoCheerEnabled), configuration.AutoCheerEnabled);
+
         if (compactFinalStrike)
         {
             var finalStrikeEnabled = autoCaptureService.FinalStrikeEnabled;
@@ -1978,6 +2125,114 @@ public sealed class PluginUI
 
         ImGui.Unindent();
     }
+
+    private static void DrawOverlayAdvancedToggle(
+        string label,
+        bool enabled,
+        System.Action toggle,
+        string tooltip,
+        ref int column,
+        bool yellowWhenEnabled = false,
+        int columnCount = 2)
+    {
+        if (column % columnCount != 0) ImGui.SameLine();
+        var background = enabled
+            ? yellowWhenEnabled
+                ? new Vector4(0.62f, 0.52f, 0.22f, 1f)
+                : new Vector4(0.12f, 0.35f, 0.28f, 1f)
+            : new Vector4(0.18f, 0.2f, 0.23f, 1f);
+        var textColor = enabled
+            ? yellowWhenEnabled
+                ? new Vector4(1f, 0.95f, 0.68f, 1f)
+                : new Vector4(0.55f, 1f, 0.72f, 1f)
+            : new Vector4(0.7f, 0.72f, 0.76f, 1f);
+        ImGui.PushStyleColor(ImGuiCol.Button, background);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, enabled
+            ? yellowWhenEnabled
+                ? new Vector4(0.72f, 0.61f, 0.28f, 1f)
+                : new Vector4(0.16f, 0.45f, 0.35f, 1f)
+            : new Vector4(0.25f, 0.28f, 0.33f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, background);
+        ImGui.PushStyleColor(ImGuiCol.Text, textColor);
+        if (ImGui.Button($"{label}##overlay-advanced-{label}", new Vector2(96f, 28f))) toggle();
+        ImGui.PopStyleColor(4);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(tooltip);
+        column = (column + 1) % columnCount;
+    }
+
+    private static void DrawOverlayAdvancedPlaceholder(string label, ref int column, int columnCount = 2)
+    {
+        if (column % columnCount != 0) ImGui.SameLine();
+        ImGui.BeginDisabled();
+        ImGui.Button($"{label}##overlay-advanced-placeholder", new Vector2(96f, 28f));
+        ImGui.EndDisabled();
+        column = (column + 1) % columnCount;
+    }
+
+    private void ToggleBoolean(string propertyName)
+    {
+        switch (propertyName)
+        {
+            case nameof(configuration.AutoDrumEnabled): configuration.AutoDrumEnabled = !configuration.AutoDrumEnabled; break;
+            case nameof(configuration.AutoCheerEnabled): configuration.AutoCheerEnabled = !configuration.AutoCheerEnabled; break;
+            case nameof(configuration.AutoWhistleEnabled): configuration.AutoWhistleEnabled = !configuration.AutoWhistleEnabled; break;
+            case nameof(configuration.AutoReleaseEnabled): configuration.AutoReleaseEnabled = !configuration.AutoReleaseEnabled; break;
+        }
+        configuration.Save();
+    }
+
+    private void ToggleCooperation(bool heart)
+    {
+        if (heart)
+        {
+            configuration.BeastHeartCooperationEnabled = !configuration.BeastHeartCooperationEnabled;
+            if (configuration.BeastHeartCooperationEnabled) configuration.BeastSoulCooperationEnabled = false;
+        }
+        else
+        {
+            configuration.BeastSoulCooperationEnabled = !configuration.BeastSoulCooperationEnabled;
+            if (configuration.BeastSoulCooperationEnabled) configuration.BeastHeartCooperationEnabled = false;
+        }
+        configuration.Save();
+    }
+
+    private void ToggleThirdForm(bool physical)
+    {
+        if (physical)
+        {
+            configuration.PhysicalThirdFormEnabled = !configuration.PhysicalThirdFormEnabled;
+            if (configuration.PhysicalThirdFormEnabled) configuration.MagicalThirdFormEnabled = false;
+        }
+        else
+        {
+            configuration.MagicalThirdFormEnabled = !configuration.MagicalThirdFormEnabled;
+            if (configuration.MagicalThirdFormEnabled) configuration.PhysicalThirdFormEnabled = false;
+        }
+        configuration.Save();
+    }
+
+    private bool IsArenaRuleEnabled(uint actionId, uint conditionId)
+        => FindArenaRule(actionId, conditionId)?.Enabled == true;
+
+    private void ToggleArenaRule(uint actionId, uint conditionId)
+    {
+        var rule = FindArenaRule(actionId, conditionId);
+        if (rule == null)
+        {
+            return;
+        }
+
+        rule.Enabled = !rule.Enabled;
+        configuration.Save();
+    }
+
+    private BeastmasterRuleDefinition? FindArenaRule(uint actionId, uint conditionId)
+        => configuration.RuleSets
+            .SelectMany(ruleSet => ruleSet.Rules)
+            .FirstOrDefault(rule => rule.ConditionType == BeastmasterRuleConditionType.SelfStatus
+                && rule.StatusCondition == BeastmasterRuleStatusCondition.Missing
+                && rule.ActionId == actionId
+                && rule.ConditionId == conditionId);
 
     private void DrawSequenceSettings()
     {
@@ -2328,8 +2583,17 @@ public sealed class PluginUI
                 case nameof(configuration.AutoReleaseEnabled):
                     configuration.AutoReleaseEnabled = value;
                     break;
+                case nameof(configuration.AutoDrumEnabled):
+                    configuration.AutoDrumEnabled = value;
+                    break;
+                case nameof(configuration.AutoCheerEnabled):
+                    configuration.AutoCheerEnabled = value;
+                    break;
                 case nameof(configuration.ShowGaugeInOverlay):
                     configuration.ShowGaugeInOverlay = value;
+                    break;
+                case nameof(configuration.OverlayThreeColumnMode):
+                    configuration.OverlayThreeColumnMode = value;
                     break;
                 case nameof(configuration.AutoOutputDiagnosticsEnabled):
                     configuration.AutoOutputDiagnosticsEnabled = value;
@@ -2340,6 +2604,28 @@ public sealed class PluginUI
         }
 
         ImGui.TextDisabled(description);
+    }
+
+    private void DrawCompactSettingCheckbox(string label, string description, string key, bool value)
+    {
+        if (ImGui.Checkbox($"{label}##{key}", ref value))
+        {
+            switch (key)
+            {
+                case nameof(configuration.AutoDrumEnabled):
+                    configuration.AutoDrumEnabled = value;
+                    break;
+                case nameof(configuration.AutoCheerEnabled):
+                    configuration.AutoCheerEnabled = value;
+                    break;
+            }
+            configuration.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(description);
+        }
     }
 
     private void DrawDebug()

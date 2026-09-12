@@ -114,7 +114,8 @@ public sealed class BeastmasterRuleService
 
         var message = $"规则集“{ruleSet.Name}”第 {ruleIndex + 1} 条“{rule.Name}”命中：{matchReason}；已请求 {availability.ActionName}（{availability.ActionId}）";
         RecordDiagnostic(message);
-        if (ruleSet.DiagnosticMode == BeastmasterRuleDiagnosticMode.Full)
+        if (configuration.RuleDiagnosticsEnabled
+            && ruleSet.DiagnosticMode == BeastmasterRuleDiagnosticMode.Full)
         {
             PrintChat(ruleSet, rule, "成功", message, now, TimeSpan.FromSeconds(2));
         }
@@ -131,7 +132,8 @@ public sealed class BeastmasterRuleService
     {
         var message = $"规则集“{ruleSet.Name}”第 {ruleIndex + 1} 条“{rule.Name}”命中：{matchReason}；{failureReason}，已回退 ACR";
         RecordDiagnostic(message);
-        if (ruleSet.DiagnosticMode != BeastmasterRuleDiagnosticMode.Off)
+        if (configuration.RuleDiagnosticsEnabled
+            && ruleSet.DiagnosticMode != BeastmasterRuleDiagnosticMode.Off)
         {
             PrintChat(ruleSet, rule, failureReason, message, now, TimeSpan.FromSeconds(5));
         }

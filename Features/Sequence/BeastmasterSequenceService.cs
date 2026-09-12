@@ -118,7 +118,7 @@ public sealed class BeastmasterSequenceService
 
         lastChatMessage = message;
         lastChatUtc = now;
-        DalamudApi.ChatGui.Print($"[驯兽师助手 {DateTime.Now:HH:mm:ss}] {message}");
+        DalamudApi.ChatGui.Print($"[驯兽师序列诊断 {DateTime.Now:HH:mm:ss}] {message}");
     }
 
     public void Abort(string reason)
