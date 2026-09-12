@@ -867,13 +867,39 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         ulong targetId,
         DateTime now)
     {
-        if (!configuration.AutoFinalStrikeEnabled
-            || !TryGetFinalStrikeSettings(gauge.WhistleIndex, out var enabled, out var hpThreshold)
-            || !enabled
-            || gauge.SummonDataId == 0
-            || gauge.SummonMaxHp == 0
-            || gauge.SummonHpPercent >= hpThreshold
-            || now < nextFinalStrikeAttemptUtc)
+        if (!configuration.AutoFinalStrikeEnabled)
+        {
+            return false;
+        }
+
+        if (!TryGetFinalStrikeSettings(gauge.WhistleIndex, out var enabled, out var hpThreshold))
+        {
+            ReportAutoOutputDiagnostic("最后一击", $"当前兽笛 {gauge.WhistleIndex} 无对应的 1/2/3 笛设置", "whistle");
+            return false;
+        }
+
+        if (!enabled)
+        {
+            ReportAutoOutputDiagnostic("最后一击", $"当前 {gauge.WhistleIndex} 笛独立开关未开启", "disabled");
+            return false;
+        }
+
+        if (gauge.SummonDataId == 0 || gauge.SummonMaxHp == 0)
+        {
+            ReportAutoOutputDiagnostic("最后一击", "未识别到有效召唤兽或宝宝血量", "summon");
+            return false;
+        }
+
+        if (gauge.SummonHpPercent > hpThreshold)
+        {
+            ReportAutoOutputDiagnostic(
+                "最后一击",
+                $"宝宝血量 {gauge.SummonHpPercent:0.#}% 高于阈值 {hpThreshold:0.#}%",
+                "hp");
+            return false;
+        }
+
+        if (now < nextFinalStrikeAttemptUtc)
         {
             return false;
         }
@@ -899,14 +925,28 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         if (configuration.AutoFinalStrikeWaitForRelease)
         {
             var releaseActionId = actionManager->GetAdjustedActionId(BeastmasterReleaseBaseActionId);
-            var releaseUnavailable = releaseActionId != 0
-                && actionManager->GetActionStatus(ActionType.Action, releaseActionId, targetId) != 0;
-            if (!releaseUnavailable)
+            var releaseReady = releaseActionId != 0
+                && actionManager->GetActionStatus(ActionType.Action, releaseActionId, targetId) == 0;
+            if (releaseReady)
             {
-                NextActionReason = "等待当前魔兽先使用释放";
+                var releaseInRange = DalamudApi.TargetManager.Target is IBattleChara releaseTarget
+                    && gauge.SummonEntry is { } summonEntry
+                    && BeastmasterActionHelper.IsSummonInActionRange(
+                        releaseTarget,
+                        summonEntry.ReleaseActionId,
+                        out _,
+                        out _);
+                NextActionReason = releaseInRange
+                    ? "等待当前魔兽先使用释放"
+                    : "释放可用但召唤兽尚未进入释放距离，等待释放完成后再使用最后一击";
                 ReportAutoOutputDiagnostic(NextActionName, NextActionReason, "wait-release");
                 return false;
             }
+
+            ReportAutoOutputDiagnostic(
+                NextActionName,
+                $"释放已不可用，继续检查最后一击（释放 ActionId {releaseActionId}，状态码 {actionManager->GetActionStatus(ActionType.Action, releaseActionId, targetId)}）",
+                "release-complete");
         }
 
         var actionStatus = actionManager->GetActionStatus(ActionType.Action, FinalStrikeActionId, targetId);
@@ -921,7 +961,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         StatusText = "自动最后一击...";
-        NextActionReason = $"{gauge.WhistleIndex} 笛宝宝血量 {gauge.SummonHpPercent:0.#}% 低于阈值 {hpThreshold:0.#}%";
+        NextActionReason = $"{gauge.WhistleIndex} 笛宝宝血量 {gauge.SummonHpPercent:0.#}% 达到阈值 {hpThreshold:0.#}%";
         if (!actionManager->UseAction(ActionType.Action, FinalStrikeActionId, targetId))
         {
             ReportAutoOutputDiagnostic(NextActionName, "UseAction 返回 false", "use-action-false");

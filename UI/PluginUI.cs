@@ -2024,7 +2024,7 @@ public sealed class PluginUI
         }
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip($"{label}宝宝血量严格低于该阈值时使用最后一击，范围 1%~100%。");
+            ImGui.SetTooltip($"{label}宝宝血量小于等于该阈值时使用最后一击，范围 1%~100%。");
         }
     }
 

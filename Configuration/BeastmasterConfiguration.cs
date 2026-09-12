@@ -9,7 +9,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 21;
+    public int Version { get; set; } = 22;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -224,6 +224,12 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         {
             AutoOutputDiagnosticsEnabled = RangeWaitChatMessagesEnabled;
             Version = 21;
+            Save();
+        }
+
+        if (Version < 22)
+        {
+            Version = 22;
             Save();
         }
 
