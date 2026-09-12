@@ -16,7 +16,7 @@ public static class BeastmasterActionHelper
         out float distance,
         out float actionRange)
     {
-        distance = Vector3.Distance(player.Position, target.Position);
+        distance = Math.Max(0f, Vector3.Distance(player.Position, target.Position) - target.HitboxRadius);
         actionRange = 0f;
         if (!DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>().TryGetRow(actionId, out var action))
         {
@@ -31,7 +31,7 @@ public static class BeastmasterActionHelper
             actionRange = action.Range;
         }
 
-        return actionRange > 0f && distance <= actionRange;
+        return actionRange <= 0f || distance <= actionRange;
     }
 
     public static bool IsSummonInActionRange(
@@ -64,8 +64,8 @@ public static class BeastmasterActionHelper
             return false;
         }
 
-        distance = Vector3.Distance(summonChara.Position, target.Position);
-        return actionRange > 0f && distance <= actionRange;
+        distance = Math.Max(0f, Vector3.Distance(summonChara.Position, target.Position) - target.HitboxRadius);
+        return actionRange <= 0f || distance <= actionRange;
     }
 
     public static bool TryGetActionLevel(uint actionId, out uint level)

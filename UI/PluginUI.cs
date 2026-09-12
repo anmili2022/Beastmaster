@@ -67,6 +67,7 @@ public sealed class PluginUI
     private BeastmasterGaugeSnapshot gaugeSnapshot = BeastmasterGaugeSnapshot.Unavailable("等待读取");
     private bool autoOutputCollapsed;
     private int selectedEquipmentSet;
+    private int selectedBattleLogIndex;
     private DateTime nextEquipmentRefreshUtc = DateTime.MinValue;
     private readonly Dictionary<string, (uint ItemId, uint EquippedCount, uint InventoryCount, uint ArmoryCount)> equipmentOwnership = new(StringComparer.Ordinal);
     private bool isMainWindowOpen;
@@ -1789,11 +1790,7 @@ public sealed class PluginUI
             "显示悬浮窗中的原因、捕获状态、当前魔兽、量谱和高级技能候选等详细信息。默认关闭。",
             nameof(configuration.ShowGaugeInOverlay),
             configuration.ShowGaugeInOverlay);
-        DrawSettingCheckbox(
-            "自动输出诊断",
-            "普通 ACR 已选技能无法释放时，在聊天栏输出技能名称和具体原因；同类提示每 3 秒最多显示一次。默认关闭。",
-            nameof(configuration.AutoOutputDiagnosticsEnabled),
-            configuration.AutoOutputDiagnosticsEnabled);
+        DrawAutoOutputDiagnosticsSettings();
         ImGui.Spacing();
         DrawAdvancedActionToggles();
 
@@ -1814,6 +1811,42 @@ public sealed class PluginUI
         ImGui.Spacing();
         DrawBeastmasterGauge();
 
+    }
+
+    private void DrawAutoOutputDiagnosticsSettings()
+    {
+        if (!ImGui.CollapsingHeader("自动输出诊断##AutoOutputDiagnostics"))
+        {
+            return;
+        }
+
+        ImGui.Indent();
+        DrawSettingCheckbox(
+            "启用自动输出诊断",
+            "所有诊断模块的状态或原因发生变化时输出一次汇总，并记录到战斗日志。",
+            nameof(configuration.AutoOutputDiagnosticsEnabled),
+            configuration.AutoOutputDiagnosticsEnabled);
+        ImGui.Spacing();
+        if (ImGui.Button("复制所选战斗日志"))
+        {
+            ImGui.SetClipboardText(autoCaptureService.GetBattleLog(selectedBattleLogIndex));
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("清空战斗日志")) autoCaptureService.ClearBattleLogs();
+        var battleLogs = autoCaptureService.BattleLogLabels;
+        if (battleLogs.Count > 0)
+        {
+            selectedBattleLogIndex = Math.Clamp(selectedBattleLogIndex, 0, battleLogs.Count - 1);
+            var labels = string.Join('\0', battleLogs) + '\0';
+            ImGui.SetNextItemWidth(260f);
+            ImGui.Combo("战斗日志", ref selectedBattleLogIndex, labels);
+        }
+        else
+        {
+            selectedBattleLogIndex = 0;
+            ImGui.TextDisabled("暂无战斗日志");
+        }
+        ImGui.Unindent();
     }
 
     private void DrawAdvancedActionToggles(bool compactFinalStrike = false)

@@ -38,6 +38,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private DateTime nextActionUtc = DateTime.MinValue;
     private DateTime capturePendingUntilUtc = DateTime.MinValue;
     private ulong captureTargetId;
+    private ulong activeTargetId;
     private uint pendingCooperationActionId;
     private uint pendingCooperationStatusId;
     private DateTime pendingCooperationUntilUtc = DateTime.MinValue;
@@ -50,8 +51,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private int whistleRotationStage = -1;
     private bool whistleRotationWaitingForCooldown;
     private DateTime whistleRotationNextActionUtc = DateTime.MinValue;
-    private DateTime lastAutoOutputDiagnosticUtc = DateTime.MinValue;
-    private string lastAutoOutputDiagnosticKey = string.Empty;
+    private DateTime lastSuccessfulActionUtc = DateTime.MinValue;
+    private string lastAutoOutputSummary = string.Empty;
+    private readonly List<string> currentBattleLog = [];
+    private readonly List<(string Label, string Text)> battleLogs = [];
+    private bool wasInCombat;
+    private readonly Dictionary<string, string> battleLogModuleStates = new(StringComparer.Ordinal);
 
     public string StatusText { get; private set; } = "等待当前目标";
 
@@ -73,42 +78,51 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     private void ReportAutoOutputDiagnostic(string actionName, string reason, string reasonKey)
     {
-        if (!configuration.AutoOutputDiagnosticsEnabled)
-        {
-            return;
-        }
-
-        var now = DateTime.UtcNow;
-        var key = $"{actionName}|{reasonKey}";
-        if (key == lastAutoOutputDiagnosticKey
-            && now - lastAutoOutputDiagnosticUtc < TimeSpan.FromSeconds(3))
-        {
-            return;
-        }
-
-        lastAutoOutputDiagnosticKey = key;
-        lastAutoOutputDiagnosticUtc = now;
-        DalamudApi.ChatGui.Print($"[驯兽师助手 {DateTime.Now:HH:mm:ss}] {actionName}无法释放：{reason}");
+        _ = actionName;
+        _ = reason;
+        _ = reasonKey;
     }
 
     private void ReportAutoOutputSuccess(string actionName, uint actionId)
     {
-        if (!configuration.AutoOutputDiagnosticsEnabled)
+        _ = actionName;
+        _ = actionId;
+        lastSuccessfulActionUtc = DateTime.UtcNow;
+        RecordBattleLog($"已请求{actionName}（ActionId {actionId}）");
+    }
+
+    private void RecordBattleLog(string message)
+    {
+        if (!configuration.AutoOutputDiagnosticsEnabled || !wasInCombat)
         {
             return;
         }
 
-        var now = DateTime.UtcNow;
-        var key = $"{actionName}|used";
-        if (key == lastAutoOutputDiagnosticKey
-            && now - lastAutoOutputDiagnosticUtc < TimeSpan.FromSeconds(3))
+        if (currentBattleLog.Count >= 500)
         {
-            return;
+            currentBattleLog.RemoveAt(0);
         }
 
-        lastAutoOutputDiagnosticKey = key;
-        lastAutoOutputDiagnosticUtc = now;
-        DalamudApi.ChatGui.Print($"[驯兽师助手 {DateTime.Now:HH:mm:ss}] 已请求{actionName}（ActionId {actionId}）");
+        currentBattleLog.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+    }
+
+    private void UpdateBattleLogState(bool inCombat)
+    {
+        if (!wasInCombat && inCombat)
+        {
+            currentBattleLog.Clear();
+            battleLogModuleStates.Clear();
+            currentBattleLog.Add($"[{DateTime.Now:HH:mm:ss}] 战斗开始");
+        }
+        else if (wasInCombat && !inCombat)
+        {
+            currentBattleLog.Add($"[{DateTime.Now:HH:mm:ss}] 战斗结束");
+            battleLogs.Insert(0, ($"战斗 {currentBattleLog[0][1..9]}", string.Join(Environment.NewLine, currentBattleLog)));
+            if (battleLogs.Count > 10) battleLogs.RemoveAt(battleLogs.Count - 1);
+            currentBattleLog.Clear();
+        }
+
+        wasInCombat = inCombat;
     }
 
     public string WhistleRotationStatus { get; private set; } = "未开启";
@@ -143,6 +157,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     public bool FinalStrikeEnabled => configuration.AutoFinalStrikeEnabled;
 
     public bool BasicComboEnabled => configuration.BasicComboEnabled;
+
+    public IReadOnlyList<string> BattleLogLabels => battleLogs.Select(log => log.Label).ToArray();
+
+    public string GetBattleLog(int index)
+        => index >= 0 && index < battleLogs.Count ? battleLogs[index].Text : "暂无战斗日志。";
+
+    public void ClearBattleLogs() => battleLogs.Clear();
 
     public void SetEnabled(bool enabled)
     {
@@ -307,6 +328,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private unsafe void OnFrameworkUpdate(IFramework framework)
     {
         _ = framework;
+        UpdateBattleLogState(DalamudApi.Condition[ConditionFlag.InCombat]);
         if (!configuration.AutoCaptureEnabled)
         {
             StatusText = "自动捕获已关闭";
@@ -445,6 +467,23 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             target = null;
         }
 
+        if (target == null)
+        {
+            if (activeTargetId != 0)
+            {
+                ResetTargetScopedState();
+            }
+        }
+        else if (activeTargetId != target.EntityId)
+        {
+            if (activeTargetId != 0)
+            {
+                ResetTargetScopedState();
+            }
+
+            activeTargetId = target.EntityId;
+        }
+
         var actionManager = ActionManager.Instance();
         if (actionManager == null)
         {
@@ -505,7 +544,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             captureTargetId = target.EntityId;
             capturePendingUntilUtc = DateTime.MinValue;
             CaptureState = "未开始";
-            ResetCooperationState();
         }
 
         var hasOwnCapture = target.StatusList.Any(status =>
@@ -548,6 +586,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         var canCapture = targetHpPercent <= configuration.CaptureHpThreshold;
+        EmitAutoOutputDiagnosticSummary(actionManager, player, target, gauge, targetHpPercent, canCapture, now);
         var capturePending = capturePendingUntilUtc > now;
         if (capturePending)
         {
@@ -569,38 +608,40 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             {
                 NextActionReason = $"等待自身获得{GetAttributeStatusName(pendingCooperationStatusId)}（{pendingCooperationStatusId}）";
                 ReportAutoOutputDiagnostic(NextActionName, NextActionReason, $"status-{pendingCooperationStatusId}");
+            }
+            else
+            {
+                NextActionReason = $"自身已有{GetAttributeStatusName(pendingCooperationStatusId)}，释放协作技第二段";
+
+                if (!BeastmasterActionHelper.IsPlayerInActionRange(
+                        player,
+                        target,
+                        actionId,
+                        out var followUpDistance,
+                        out var followUpRange))
+                {
+                    NextActionReason = $"等待进入协作技射程（当前 {followUpDistance:0.##}/{followUpRange:0.##} yalms）";
+                    ReportAutoOutputDiagnostic(NextActionName, $"距离不足（当前 {followUpDistance:0.##}/{followUpRange:0.##} yalms）", "range");
+                    return;
+                }
+
+                var cooperationStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
+                var cooperationUsed = TryUseAdvancedAction(actionManager, actionId, target.GameObjectId, cooperationStatus);
+                if (!cooperationUsed)
+                {
+                    ReportAutoOutputDiagnostic(NextActionName,
+                        $"技能系统状态码 {cooperationStatus}；技力 {gauge.Tp}/250，兽力 {gauge.BeastPower}/250",
+                        $"status-{cooperationStatus}");
+                }
+                if (cooperationUsed)
+                {
+                    ReportAutoOutputSuccess(NextActionName, actionId);
+                    nextActionUtc = now.AddMilliseconds(700);
+                    ResetCooperationState();
+                }
+
                 return;
             }
-
-            NextActionReason = $"自身已有{GetAttributeStatusName(pendingCooperationStatusId)}，释放协作技第二段";
-
-            if (!BeastmasterActionHelper.IsPlayerInActionRange(
-                    player,
-                    target,
-                    actionId,
-                    out var followUpDistance,
-                    out var followUpRange))
-            {
-                NextActionReason = $"等待进入协作技射程（当前 {followUpDistance:0.##}/{followUpRange:0.##} yalms）";
-                ReportAutoOutputDiagnostic(NextActionName, $"距离不足（当前 {followUpDistance:0.##}/{followUpRange:0.##} yalms）", "range");
-                return;
-            }
-
-            var cooperationStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
-            var cooperationUsed = TryUseAdvancedAction(actionManager, actionId, target.GameObjectId, cooperationStatus);
-            if (!cooperationUsed)
-            {
-                ReportAutoOutputDiagnostic(NextActionName,
-                    $"技能系统状态码 {cooperationStatus}；技力 {gauge.Tp}/250，兽力 {gauge.BeastPower}/250",
-                    $"status-{cooperationStatus}");
-            }
-            if (cooperationUsed)
-            {
-                nextActionUtc = now.AddMilliseconds(700);
-                ResetCooperationState();
-            }
-
-            return;
         }
 
         if (TryUseFinalStrike(actionManager, gauge, target.GameObjectId, now))
@@ -652,6 +693,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             }
             if (cooperationUsed)
             {
+                ReportAutoOutputSuccess(NextActionName, actionId);
                 nextActionUtc = now.AddMilliseconds(700);
                 pendingCooperationActionId = cooperationFollowUpId;
                 pendingCooperationStatusId = cooperationStatusId;
@@ -799,6 +841,134 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         captureTargetId = 0;
         capturePendingUntilUtc = DateTime.MinValue;
         CaptureState = "未开始";
+    }
+
+    private unsafe void EmitAutoOutputDiagnosticSummary(
+        ActionManager* actionManager,
+        IBattleChara player,
+        IBattleChara target,
+        BeastmasterGaugeSnapshot gauge,
+        float targetHpPercent,
+        bool canCapture,
+        DateTime now)
+    {
+        if (!configuration.AutoOutputDiagnosticsEnabled)
+        {
+            return;
+        }
+
+        var items = new List<(string Name, string StateKey, string Detail)>();
+        void Add(string name, bool available, string reason = "")
+        {
+            var detail = available ? "可用" : $"不可用:{reason}";
+            var stateKey = available ? "可用" : $"不可用:{GetDiagnosticReasonKey(reason)}";
+            items.Add((name, stateKey, detail));
+        }
+
+        if (configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
+        {
+            if (pendingCooperationActionId != 0)
+            {
+                var status = actionManager->GetActionStatus(ActionType.Action, pendingCooperationActionId, target.GameObjectId);
+                Add("御兽", status == 0, status == 0 ? "" : $"状态码 {status}");
+            }
+            else if (TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var cooperationId, out _, out _))
+            {
+                var status = actionManager->GetActionStatus(ActionType.Action, cooperationId, target.GameObjectId);
+                Add("御兽", status == 0, status == 0 ? "" : gauge.Tp < BeastmasterGaugeSnapshot.ComboGaugeRequirement || gauge.BeastPower < BeastmasterGaugeSnapshot.ComboGaugeRequirement
+                    ? $"资源 技 {gauge.Tp}/250 兽 {gauge.BeastPower}/250"
+                    : $"状态码 {status}");
+            }
+            else
+            {
+                Add("御兽", false, $"资源 技 {gauge.Tp}/250 兽 {gauge.BeastPower}/250");
+            }
+        }
+
+        if (configuration.AutoFinalStrikeEnabled
+            && TryGetFinalStrikeSettings(gauge.WhistleIndex, out var finalEnabled, out var finalThreshold))
+        {
+            var finalStatus = actionManager->GetActionStatus(ActionType.Action, FinalStrikeActionId, target.GameObjectId);
+            Add("最后一击", finalEnabled && gauge.SummonMaxHp > 0 && gauge.SummonHpPercent <= finalThreshold && finalStatus == 0,
+                !finalEnabled ? "当前笛位关闭" : gauge.SummonMaxHp == 0 ? "无宝宝" : gauge.SummonHpPercent > finalThreshold ? $"宝宝血量 {gauge.SummonHpPercent:0.#}%/{finalThreshold:0.#}%" : finalStatus == 0 ? "" : $"状态码 {finalStatus}");
+        }
+
+        if (configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
+        {
+            var thirdReady = gauge.BeastHeartStacks >= 3 && (gauge.HasWhiteStatus || gauge.HasPurpleStatus);
+            Add("万象流转", thirdReady, thirdReady ? "" : $"资源/状态不足（兽心 {gauge.BeastHeartStacks} 层）");
+        }
+
+        if (configuration.AutoReleaseEnabled
+            && gauge.SummonEntry != null)
+        {
+            var releaseId = actionManager->GetAdjustedActionId(BeastmasterReleaseBaseActionId);
+            if (releaseId == 0)
+            {
+                Add("释放", false, "无运行时技能");
+            }
+            else
+            {
+                var status = actionManager->GetActionStatus(ActionType.Action, releaseId, target.GameObjectId);
+                var inRange = BeastmasterActionHelper.IsSummonInActionRange(
+                    target,
+                    gauge.SummonEntry.ReleaseActionId,
+                    out var distance,
+                    out var range);
+                Add("释放", status == 0 && inRange,
+                    status != 0 ? $"状态码 {status}" : inRange ? "" : $"宝宝距离 {distance:0.#}/{range:0.#}");
+            }
+        }
+
+        if (configuration.AutoCaptureTryCapture)
+        {
+            Add("捕获", canCapture, canCapture ? "" : $"目标血量 {targetHpPercent:0.#}%/{configuration.CaptureHpThreshold:0.#}%");
+        }
+
+        if (configuration.BasicComboEnabled)
+        {
+            var comboId = actionManager->Combo.Timer > 0f && actionManager->Combo.Action == biteActionId && player.Level >= 12
+                ? shieldActionId
+                : actionManager->Combo.Timer > 0f && actionManager->Combo.Action == smashActionId && player.Level >= 2
+                    ? biteActionId
+                    : smashActionId;
+            var comboStatus = actionManager->GetActionStatus(ActionType.Action, comboId, target.GameObjectId);
+            var comboInRange = BeastmasterActionHelper.IsPlayerInActionRange(player, target, comboId, out var comboDistance, out var comboRange);
+            Add("基础技能", comboStatus == 0 && comboInRange,
+                comboStatus != 0 ? $"状态码 {comboStatus}" : comboInRange ? "" : $"距离 {comboDistance:0.#}/{comboRange:0.#}");
+        }
+
+        var summary = string.Join(" ", items.Select(item => $"{item.Name}[{item.Detail}]"));
+        var summaryKey = string.Join(" ", items.Select(item => $"{item.Name}[{item.StateKey}]"));
+        if (items.Count > 0 && summaryKey != lastAutoOutputSummary)
+        {
+            lastAutoOutputSummary = summaryKey;
+            RecordBattleLog($"自动输出诊断：{summary}");
+        }
+
+    }
+
+    private static string GetDiagnosticReasonKey(string reason)
+    {
+        if (reason.StartsWith("状态码", StringComparison.Ordinal)) return reason;
+        if (reason.StartsWith("距离", StringComparison.Ordinal)
+            || reason.StartsWith("宝宝距离", StringComparison.Ordinal)) return "距离";
+        if (reason.StartsWith("资源", StringComparison.Ordinal)) return "资源不足";
+        if (reason.StartsWith("宝宝血量", StringComparison.Ordinal)) return "宝宝血量";
+        if (reason.StartsWith("资源/状态不足", StringComparison.Ordinal)) return "资源/状态不足";
+        return reason;
+    }
+
+    private void ResetTargetScopedState()
+    {
+        activeTargetId = 0;
+        lastAutoOutputSummary = string.Empty;
+        lastSuccessfulActionUtc = DateTime.MinValue;
+        nextActionUtc = DateTime.MinValue;
+        nextReleaseAttemptUtc = DateTime.MinValue;
+        nextFinalStrikeAttemptUtc = DateTime.MinValue;
+        ResetCaptureState();
+        ResetCooperationState();
     }
 
     private unsafe bool TryUseReleaseAction(
