@@ -5,7 +5,9 @@ using System.Globalization;
 using System.Numerics;
 using System.Text;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using Dalamud.Game.NativeWrapper;
+using Dalamud.Game.Inventory;
 
 namespace Beastmaster;
 
@@ -470,6 +472,272 @@ public sealed class BeastmasterDebugDataService
         return builder.ToString().TrimEnd();
     }
 
+    public string FindBeastmasterRecoveryItems()
+    {
+        var items = DalamudApi.DataManager.GetExcelSheet<Item>();
+        var candidates = items
+            .Where(item => item.RowId != 0
+                && (item.Name.ExtractText().Contains("恢复药", StringComparison.Ordinal)
+                    || item.Name.ExtractText().Contains("魔兽", StringComparison.Ordinal)))
+            .OrderBy(item => item.RowId)
+            .ToArray();
+        var inventoryTypes = new[]
+        {
+            GameInventoryType.Inventory1,
+            GameInventoryType.Inventory2,
+            GameInventoryType.Inventory3,
+            GameInventoryType.Inventory4,
+        };
+        var counts = new Dictionary<uint, uint>();
+        foreach (var type in inventoryTypes)
+        {
+            foreach (var inventoryItem in DalamudApi.GameInventory.GetInventoryItems(type))
+            {
+                if (!inventoryItem.IsEmpty)
+                {
+                    counts[inventoryItem.BaseItemId] = counts.GetValueOrDefault(inventoryItem.BaseItemId) + (uint)inventoryItem.Quantity;
+                }
+            }
+        }
+
+        var builder = new StringBuilder()
+            .AppendLine("类型: 魔兽恢复药扫描")
+            .AppendLine("奇弈恢复药内部 ID: 1级=76，2级=77，3级=78")
+            .AppendLine("扫描容器: Inventory1~Inventory4")
+            .AppendLine();
+        if (candidates.Length == 0)
+        {
+            builder.AppendLine("物品表中没有找到名称包含“恢复药”或“魔兽”的候选物品。");
+        }
+        else
+        {
+            foreach (var item in candidates)
+            {
+                builder.AppendLine($"ItemId={item.RowId} | {item.Name.ExtractText()} | 持有数量={counts.GetValueOrDefault(item.RowId)}");
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string FindContentInventoryContainers()
+    {
+        var manager = ContentInventoryManager.Instance();
+        if (manager == null)
+        {
+            return "类型: 内容道具容器扫描\nContentInventoryManager 不可用。";
+        }
+
+        var itemSheet = DalamudApi.DataManager.GetExcelSheet<Item>();
+        var candidates = Enumerable.Range(0, 10000)
+            .Select(value => (InventoryType)(uint)value)
+            .Concat(Enum.GetValues<InventoryType>())
+            .Distinct()
+            .OrderBy(value => (uint)value)
+            .ToArray();
+
+        var builder = new StringBuilder()
+            .AppendLine("类型: 内容道具容器扫描")
+            .AppendLine("模式: 只读，不使用道具，不写入内存")
+            .AppendLine("目标: 查找奇弈道具等 ContentInventoryManager 容器")
+            .AppendLine($"TerritoryType: {DalamudApi.ClientState.TerritoryType}")
+            .AppendLine($"InCombat: {DalamudApi.Condition[ConditionFlag.InCombat]}")
+            .AppendLine();
+
+        var containerCount = 0;
+        var nonEmptySlotCount = 0;
+        foreach (var inventoryType in candidates)
+        {
+            if (!manager->HasInventoryContainer(inventoryType))
+            {
+                continue;
+            }
+
+            containerCount++;
+            var container = manager->GetInventoryContainer(inventoryType);
+            var typeValue = (uint)inventoryType;
+            var typeName = Enum.IsDefined(inventoryType) ? inventoryType.ToString() : $"Unknown{typeValue}";
+            if (container == null)
+            {
+                builder.AppendLine($"InventoryType={typeValue} ({typeName}) | 容器指针为空");
+                continue;
+            }
+
+            var size = Math.Clamp(container->Size, 0, 200);
+            builder.AppendLine($"InventoryType={typeValue} ({typeName}) | Loaded={container->IsLoaded} | Size={container->Size}");
+            for (short slot = 0; slot < size; slot++)
+            {
+                var item = manager->GetInventorySlot(inventoryType, slot);
+                if (item == null || item->ItemId == 0 || item->Quantity <= 0)
+                {
+                    continue;
+                }
+
+                nonEmptySlotCount++;
+                var itemName = itemSheet.TryGetRow(item->ItemId, out var row)
+                    ? row.Name.ExtractText()
+                    : string.Empty;
+                builder.AppendLine($"  Slot={slot} | ItemId={item->ItemId} | 数量={item->Quantity} | {itemName}");
+            }
+        }
+
+        if (containerCount == 0)
+        {
+            builder.AppendLine("未发现 ContentInventoryManager 当前可见容器。请进入斗兽奇弈并打开奇弈道具后再次读取。");
+        }
+
+        builder.AppendLine()
+            .AppendLine($"发现容器数: {containerCount}")
+            .AppendLine($"非空槽位数: {nonEmptySlotCount}")
+            .AppendLine("提示: 请把包含恢复药 ItemId/数量的扫描结果反馈，用于确认奇弈道具容器。当前扫描不会验证物品能否使用。");
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string GetXbmAddonProbe()
+    {
+        var builder = new StringBuilder()
+            .AppendLine("类型: XBM Agent/AddOn 扫描")
+            .AppendLine("模式: 只读，不触发回调，不使用道具，不写入内存")
+            .AppendLine("目标: 查找斗兽奇弈/驯兽师界面中的奇弈道具数据")
+            .AppendLine($"TerritoryType: {DalamudApi.ClientState.TerritoryType}")
+            .AppendLine($"InCombat: {DalamudApi.Condition[ConditionFlag.InCombat]}")
+            .AppendLine();
+
+        var agentModule = AgentModule.Instance();
+        builder.AppendLine("XBM Agents:");
+        foreach (var agent in XbmAgents())
+        {
+            try
+            {
+                var pointer = agentModule == null
+                    ? null
+                    : agentModule->GetAgentByInternalId((AgentId)agent.Id);
+                builder.AppendLine($"  AgentId={agent.Id} {agent.Name} | Address={(pointer == null ? "null" : $"0x{((nint)pointer).ToInt64():X}")}");
+            }
+            catch (Exception ex)
+            {
+                builder.AppendLine($"  AgentId={agent.Id} {agent.Name} | 读取失败: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        builder.AppendLine()
+            .AppendLine("XBM AddOns:");
+        foreach (var addonName in XbmAddonNames())
+        {
+            DumpAddon(builder, addonName);
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("Item Action 状态探针（只读）:");
+        var actionManager = ActionManager.Instance();
+        if (actionManager == null)
+        {
+            builder.AppendLine("  ActionManager 不可用。");
+        }
+        else
+        {
+            foreach (var item in new[]
+            {
+                (Id: 76u, Name: "1级魔兽恢复药"),
+                (Id: 77u, Name: "2级魔兽恢复药"),
+                (Id: 78u, Name: "3级魔兽恢复药"),
+                (Id: 243136u, Name: "1级恢复药图标"),
+                (Id: 243137u, Name: "2级恢复药图标"),
+                (Id: 243138u, Name: "3级恢复药图标"),
+            })
+            {
+                var itemStatus = actionManager->GetActionStatus(ActionType.Item, item.Id, 0);
+                var actionStatus = actionManager->GetActionStatus(ActionType.Action, item.Id, 0);
+                builder.AppendLine($"  {item.Name} Id={item.Id} | ItemType状态={itemStatus} | ActionType状态={actionStatus}");
+            }
+        }
+
+        builder.AppendLine("提示: 请在打开奇弈道具界面后读取；重点查看 AtkValue 中疑似 ItemId、数量或恢复药名称的字段。");
+        return builder.ToString().TrimEnd();
+    }
+
+    private static (uint Id, string Name)[] XbmAgents()
+        =>
+        [
+            (497, "XBMContentsMainHUD"),
+            (498, "XBMItemDetail"),
+            (499, "XBMBattleMonsterDetail"),
+            (500, "XBMMonsterNotebook"),
+            (501, "XBMPetParty"),
+            (502, "XBMStageDetailList"),
+            (503, "XBMStageList"),
+            (504, "XBMStageMap"),
+            (505, "XBMResult"),
+            (506, "XBMRanking"),
+        ];
+
+    private static string[] XbmAddonNames()
+        =>
+        [
+            "XBMContentsMainHUD",
+            "XBMItemDetail",
+            "XBMBattleMonsterDetail",
+            "XBMMonsterNotebook",
+            "XBMPetParty",
+            "XBMStageDetailList",
+            "XBMStageList",
+            "XBMStageMap",
+            "XBMResult",
+            "XBMRanking",
+        ];
+
+    private static void DumpAddon(StringBuilder builder, string addonName)
+    {
+        try
+        {
+            var addon = DalamudApi.GameGui.GetAddonByName(addonName);
+            builder.AppendLine($"Addon={addonName}");
+            if (addon.IsNull)
+            {
+                builder.AppendLine("  状态: 不存在");
+                return;
+            }
+
+            builder.AppendLine($"  Address=0x{addon.Address.ToInt64():X}");
+            builder.AppendLine($"  Name={addon.Name}");
+            builder.AppendLine($"  Id={addon.Id} | ParentId={addon.ParentId} | HostId={addon.HostId}");
+            builder.AppendLine($"  Ready={addon.IsReady} | Visible={addon.IsVisible}");
+            builder.AppendLine($"  AtkValuesCount={addon.AtkValuesCount}");
+
+            if (!addon.IsReady)
+            {
+                return;
+            }
+
+            var index = 0;
+            foreach (var value in addon.AtkValues.Take(300))
+            {
+                string renderedValue;
+                try
+                {
+                    renderedValue = value.GetValue()?.ToString() ?? "<null>";
+                }
+                catch (Exception ex)
+                {
+                    renderedValue = $"<读取失败: {ex.GetType().Name}>";
+                }
+
+                builder.AppendLine($"  Value[{index++}] Type={value.ValueType} Value={renderedValue}");
+            }
+
+            if (addon.AtkValuesCount > 300)
+            {
+                builder.AppendLine($"  AtkValues 超过 300，仅输出前 300 项。");
+            }
+        }
+        catch (Exception ex)
+        {
+            builder.AppendLine($"Addon={addonName}");
+            builder.AppendLine($"  读取失败: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     public string GetCurrentTargetDebug()
     {
         var target = DalamudApi.TargetManager.Target;
@@ -925,6 +1193,57 @@ public sealed class BeastmasterDebugDataService
             : manager->GetActionStatus(ActionType.Action, adjustedActionId, targetId);
         builder.AppendLine(
             $"{label}: Base={actionId} | Adjusted={adjustedActionId} | {GetActionNameById(adjustedActionId)} | Target={targetId} | Status={status}");
+    }
+
+    public unsafe string GetXbmItemStructureProbe()
+    {
+        var builder = new StringBuilder()
+            .AppendLine("类型: XBM 道具结构")
+            .AppendLine("模式: 只读，不触发回调，不使用道具，不写入内存")
+            .AppendLine("目标: 读取 XBMContentsMainHUD 道具字段，定位恢复药显示槽位")
+            .AppendLine($"TerritoryType: {DalamudApi.ClientState.TerritoryType}")
+            .AppendLine($"InCombat: {DalamudApi.Condition[ConditionFlag.InCombat]}")
+            .AppendLine();
+
+        var addon = DalamudApi.GameGui.GetAddonByName("XBMContentsMainHUD", 1);
+        if (addon.IsNull || !addon.IsVisible)
+        {
+            builder.AppendLine("XBMContentsMainHUD 不存在或不可见。");
+            builder.AppendLine("提示: 请先进入斗兽奇弈并打开奇弈道具界面。");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine($"XBMContentsMainHUD Address=0x{addon.Address.ToInt64():X}");
+        builder.AppendLine($"  IsReady={addon.IsReady} | IsVisible={addon.IsVisible}");
+        builder.AppendLine($"  AtkValuesCount={addon.AtkValuesCount}");
+        builder.AppendLine();
+
+        builder.AppendLine("AtkValues 完整列表:");
+        var index = 0;
+        foreach (var value in addon.AtkValues)
+        {
+            string renderedValue;
+            try
+            {
+                renderedValue = value.GetValue()?.ToString() ?? "<null>";
+            }
+            catch (Exception ex)
+            {
+                renderedValue = $"<读取失败: {ex.GetType().Name}>";
+            }
+            builder.AppendLine($"  Value[{index++}] Type={value.ValueType} Value={renderedValue}");
+            if (index >= 300) break;
+        }
+
+        if (addon.AtkValuesCount > 300)
+        {
+            builder.AppendLine($"  AtkValues 超过 300，仅输出前 300 项。");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("提示: 已知恢复药分组结构: Value[N+0]=Bool(存在) Value[N+1]=Bool(可用) Value[N+2]=UInt(iconId) Value[N+3]=UInt(itemId) Value[N+4]=String(name)");
+        builder.AppendLine("提示: 实际使用通过 RaptureHotbarModule.ExecuteSlot 执行显示槽位，不使用 FireCallback。");
+        return builder.ToString().TrimEnd();
     }
 
     private static string JoinLines(params string[] lines)

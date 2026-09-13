@@ -14,6 +14,9 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint BeastmasterReleaseBaseActionId = 44890;
     private const uint DrumActionId = 44905;
     private const uint CheerActionId = 44904;
+    private const uint SafeShieldActionId = 44893;
+    private const float SafeShieldRange = 3f;
+    private static readonly TimeSpan SafeShieldRequestCooldown = TimeSpan.FromSeconds(2);
     private const uint WhitePhysicalThirdFormActionId = 44931;
     private const uint PurplePhysicalThirdFormActionId = 44930;
     private const uint WhiteMagicalThirdFormActionId = 44933;
@@ -30,6 +33,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private readonly BeastmasterConfiguration configuration;
     private readonly BeastmasterSequenceService sequenceService;
     private readonly BeastmasterRuleService ruleService;
+    private readonly BeastmasterCrucibleItemService crucibleItemService = new();
     private readonly uint smashActionId;
     private readonly uint biteActionId;
     private readonly uint shieldActionId;
@@ -48,6 +52,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private DateTime pendingWhistleUntilUtc = DateTime.MinValue;
     private DateTime nextWhistleAttemptUtc = DateTime.MinValue;
     private DateTime nextFinalStrikeAttemptUtc = DateTime.MinValue;
+    private DateTime nextSafeShieldAttemptUtc = DateTime.MinValue;
     private DateTime resurrectionProtectionUntilUtc = DateTime.MinValue;
     private bool playerWasDead;
     private bool reportedMissingData;
@@ -92,6 +97,24 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         _ = actionId;
         lastSuccessfulActionUtc = DateTime.UtcNow;
         RecordBattleLog($"已请求{actionName}（ActionId {actionId}）");
+    }
+
+    private void ReportCooperationDiagnostic(string message, string stateKey)
+    {
+        if (!configuration.AutoOutputDiagnosticsEnabled)
+        {
+            return;
+        }
+
+        var key = $"协作二段|{stateKey}";
+        if (battleLogModuleStates.TryGetValue(key, out var previousState)
+            && previousState == stateKey)
+        {
+            return;
+        }
+
+        battleLogModuleStates[key] = stateKey;
+        RecordBattleLog($"协作二段：{message}");
     }
 
     private void RecordBattleLog(string message)
@@ -182,9 +205,11 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             nextActionUtc = DateTime.MinValue;
             nextReleaseAttemptUtc = DateTime.MinValue;
             nextFinalStrikeAttemptUtc = DateTime.MinValue;
+            nextSafeShieldAttemptUtc = DateTime.MinValue;
             ResetCaptureState();
             ResetCooperationState();
             ResetAutoWhistle();
+            crucibleItemService.Reset();
             DalamudApi.ChatGui.Print("[驯兽师助手] 自动捕获已关闭。");
         }
     }
@@ -237,9 +262,11 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             nextActionUtc = DateTime.MinValue;
             nextReleaseAttemptUtc = DateTime.MinValue;
             nextFinalStrikeAttemptUtc = DateTime.MinValue;
+            nextSafeShieldAttemptUtc = DateTime.MinValue;
             ResetCaptureState();
             ResetCooperationState();
             ResetAutoWhistle();
+            crucibleItemService.Reset();
         }
     }
 
@@ -344,6 +371,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             ResetCaptureState();
             ResetWhistleRotation("自动输出未启用");
             ResetAutoWhistle();
+            crucibleItemService.Reset();
             return;
         }
 
@@ -356,6 +384,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             ResetCaptureState();
             ResetCooperationState();
             ResetAutoWhistle();
+            crucibleItemService.Reset();
             return;
         }
 
@@ -437,6 +466,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             nextActionUtc = DateTime.MinValue;
             nextReleaseAttemptUtc = DateTime.MinValue;
             nextFinalStrikeAttemptUtc = DateTime.MinValue;
+            nextSafeShieldAttemptUtc = DateTime.MinValue;
             ResetCaptureState();
             ResetCooperationState();
             ResetAutoWhistle();
@@ -526,6 +556,23 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             StatusText = sequenceService.Status;
             NextActionName = "技能序列";
             NextActionReason = "技能序列正在接管规则模式和普通 ACR";
+            return;
+        }
+
+        var playerHpPercent = player.MaxHp == 0
+            ? 100f
+            : player.CurrentHp * 100f / player.MaxHp;
+        if (configuration.AutoRecoveryItemEnabled
+            && DalamudApi.Condition[ConditionFlag.InCombat]
+            && IsArenaTerritory(DalamudApi.ClientState.TerritoryType)
+            && playerHpPercent < configuration.AutoRecoveryItemHpThreshold
+            && crucibleItemService.TryUseBestRecoveryItem(player, now, out var recoveryItemId))
+        {
+            StatusText = "自动使用恢复药...";
+            NextActionName = $"{recoveryItemId - 75}级魔兽恢复药";
+            NextActionReason = $"自身血量 {playerHpPercent:0.#}% 低于阈值 {configuration.AutoRecoveryItemHpThreshold:0.#}%";
+            nextActionUtc = now.AddMilliseconds(700);
+            RecordBattleLog($"已请求{NextActionName}（XBMItem {recoveryItemId}）");
             return;
         }
 
@@ -636,7 +683,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             if (pendingCooperationStatusId != 0 && !HasSelfStatus(pendingCooperationStatusId))
             {
                 NextActionReason = $"等待自身获得{GetAttributeStatusName(pendingCooperationStatusId)}（{pendingCooperationStatusId}）";
-                ReportAutoOutputDiagnostic(NextActionName, NextActionReason, $"status-{pendingCooperationStatusId}");
+                ReportCooperationDiagnostic($"等待{GetAttributeStatusName(pendingCooperationStatusId)}，准备{NextActionName}", $"wait-{pendingCooperationStatusId}");
             }
             else
             {
@@ -658,12 +705,16 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 var cooperationUsed = TryUseAdvancedAction(actionManager, actionId, target.GameObjectId, cooperationStatus);
                 if (!cooperationUsed)
                 {
+                    ReportCooperationDiagnostic(
+                        $"{NextActionName}不可用：状态码 {cooperationStatus}（等待窗口剩余 {(pendingCooperationUntilUtc - now).TotalSeconds:0.#} 秒）",
+                        $"status-{cooperationStatus}");
                     ReportAutoOutputDiagnostic(NextActionName,
                         $"技能系统状态码 {cooperationStatus}；技力 {gauge.Tp}/250，兽力 {gauge.BeastPower}/250",
                         $"status-{cooperationStatus}");
                 }
                 if (cooperationUsed)
                 {
+                    ReportCooperationDiagnostic($"已完成协作第二段：{NextActionName}", "completed");
                     ReportAutoOutputSuccess(NextActionName, actionId);
                     nextActionUtc = now.AddMilliseconds(700);
                     ResetCooperationState();
@@ -706,6 +757,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         if ((configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
+            && pendingCooperationActionId == 0
             && TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var cooperationActionId, out var cooperationFollowUpId, out var cooperationStatusId))
         {
             actionId = cooperationActionId;
@@ -743,6 +795,21 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 pendingCooperationUntilUtc = now.AddSeconds(7);
             }
 
+            return;
+        }
+
+        if (configuration.AutoSafeShieldEnabled
+            && now >= nextSafeShieldAttemptUtc
+            && BeastmasterActionHelper.IsPlayerInActionRange(
+                player,
+                target,
+                SafeShieldActionId,
+                out var shieldDistance,
+                out _)
+            && shieldDistance <= SafeShieldRange
+            && TryUseEnabledSelfAction(actionManager, SafeShieldActionId, "安全盾牌", now, target.GameObjectId))
+        {
+            nextSafeShieldAttemptUtc = now.Add(SafeShieldRequestCooldown);
             return;
         }
 
@@ -879,6 +946,9 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
     }
 
+    private static bool IsArenaTerritory(uint territoryId)
+        => territoryId is >= 1339 and <= 1343;
+
     private void ResetCaptureState()
     {
         captureTargetId = 0;
@@ -890,9 +960,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         ActionManager* actionManager,
         uint actionId,
         string actionName,
-        DateTime now)
+        DateTime now,
+        ulong targetId = 0)
     {
-        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, 0);
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, targetId);
         if (actionStatus != 0)
         {
             ReportAutoOutputDiagnostic(actionName, $"技能系统状态码 {actionStatus}", $"status-{actionStatus}");
@@ -902,7 +973,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         StatusText = $"自动使用{actionName}...";
         NextActionName = actionName;
         NextActionReason = "高级技能已就绪";
-        if (!actionManager->UseAction(ActionType.Action, actionId, 0))
+        if (!actionManager->UseAction(ActionType.Action, actionId, targetId))
         {
             ReportAutoOutputDiagnostic(actionName, "UseAction 返回 false", "use-action-false");
             return false;
@@ -991,6 +1062,21 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 Add("释放", status == 0 && inRange,
                     status != 0 ? $"状态码 {status}" : inRange ? "" : $"宝宝距离 {distance:0.#}/{range:0.#}");
             }
+        }
+
+        if (configuration.AutoSafeShieldEnabled)
+        {
+            var shieldStatus = actionManager->GetActionStatus(ActionType.Action, SafeShieldActionId, target.GameObjectId);
+            var shieldInRange = BeastmasterActionHelper.IsPlayerInActionRange(
+                player,
+                target,
+                SafeShieldActionId,
+                out var shieldDistance,
+                out _);
+            Add("安全盾牌", shieldStatus == 0 && shieldInRange && shieldDistance <= SafeShieldRange,
+                shieldDistance > SafeShieldRange
+                    ? $"距离 {shieldDistance:0.#}/{SafeShieldRange:0.#}"
+                    : shieldStatus == 0 ? "" : $"状态码 {shieldStatus}");
         }
 
         if (configuration.AutoCaptureTryCapture)

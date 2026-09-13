@@ -23,4 +23,5 @@ internal sealed class DalamudApi
     [PluginService] public static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] public static ICommandManager Commands { get; private set; } = null!;
     [PluginService] public static IPluginLog Log { get; private set; } = null!;
+    [PluginService] public static ISigScanner SigScanner { get; private set; } = null!;
 }

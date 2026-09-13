@@ -539,6 +539,15 @@ public sealed class PluginUI
         {
             configuration.SelectedMainSection = section.Key;
             configuration.Save();
+            if (section.Key == "arena-navigation")
+            {
+                navigationService.Navigate(new BeastmasterQuestLocation(
+                    148,
+                    4,
+                    new Vector3(24.238f, -6.003f, 65.809f),
+                    "黑衣森林中央林区",
+                    "斗兽塔"));
+            }
         }
 
         if (selected)
@@ -563,16 +572,6 @@ public sealed class PluginUI
         ImGui.TextDisabled("区域：黑衣森林中央林区");
         ImGui.TextDisabled("Map.RowId: 4");
         ImGui.TextDisabled("世界坐标：X=24.238, Y=-6.003, Z=65.809");
-        if (ImGui.Button("开始导航##arena-navigation-start"))
-        {
-            navigationService.Navigate(new BeastmasterQuestLocation(
-                148,
-                4,
-                new Vector3(24.238f, -6.003f, 65.809f),
-                "黑衣森林中央林区",
-                "斗兽塔"));
-        }
-        ImGui.SameLine();
         ImGui.TextDisabled("需要 vnavmesh；跨区需要 Lifestream");
     }
 
@@ -1845,7 +1844,7 @@ public sealed class PluginUI
             configuration.OverlayThreeColumnMode);
         ImGui.Spacing();
         DrawAdvancedActionToggles();
-        ImGui.TextDisabled("优先级：协作二段 → 释放 → 最后一击 → 鼓劲 → 声援 → 万象流转 → 协作一段 → 捕获 → 基础技能");
+        ImGui.TextDisabled("优先级：技能序列 → 恢复药 → 规则模式 → 协作二段 → 释放 → 最后一击 → 鼓劲 → 声援 → 万象流转 → 协作一段 → 安全盾牌 → 捕获 → 基础技能");
 
         ImGui.Spacing();
         DrawSequenceSettings();
@@ -1926,7 +1925,7 @@ public sealed class PluginUI
                 DrawOverlayAdvancedToggle("释放", configuration.AutoReleaseEnabled, () => ToggleBoolean(nameof(configuration.AutoReleaseEnabled)), "释放 · 好了就放", ref threeColumn, columnCount: 3);
                 DrawOverlayAdvancedToggle("持续吸引", IsArenaRuleEnabled(46751, 2413), () => ToggleArenaRule(46751, 2413), "持续吸引", ref threeColumn, columnCount: 3, yellowWhenEnabled: true);
                 DrawOverlayAdvancedToggle("持续挑衅", IsArenaRuleEnabled(46750, 5586), () => ToggleArenaRule(46750, 5586), "持续挑衅", ref threeColumn, columnCount: 3, yellowWhenEnabled: true);
-                DrawOverlayAdvancedPlaceholder("待定", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("安全盾牌", configuration.AutoSafeShieldEnabled, () => ToggleBoolean(nameof(configuration.AutoSafeShieldEnabled)), "安全盾牌：玩家到目标不超过 3 yalms 且盾牌冲击可用时自动使用。", ref threeColumn, columnCount: 3, yellowWhenEnabled: true);
                 return;
             }
 
@@ -1977,7 +1976,7 @@ public sealed class PluginUI
                     configuration.AutoWhistleEnabled = !configuration.AutoWhistleEnabled;
                     configuration.Save();
                 }, "当前没有魔兽时，按兽笛 1→2→3 使用首个可用技能；请求后等待 1 秒确认召唤，避免连续误用下一支兽笛。", ref column);
-            DrawOverlayAdvancedPlaceholder("待定", ref column);
+            DrawOverlayAdvancedToggle("安全盾牌", configuration.AutoSafeShieldEnabled, () => ToggleBoolean(nameof(configuration.AutoSafeShieldEnabled)), "安全盾牌：玩家到目标不超过 3 yalms 且盾牌冲击可用时自动使用。", ref column, yellowWhenEnabled: true);
             DrawOverlayAdvancedToggle("释放", configuration.AutoReleaseEnabled,
                 () =>
                 {
@@ -2066,6 +2065,27 @@ public sealed class PluginUI
 
         DrawCompactSettingCheckbox("鼓劲", "鼓劲 · 好了就放：御兽之心为 0 时正常判断；御兽之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用鼓劲（44905）。", nameof(configuration.AutoDrumEnabled), configuration.AutoDrumEnabled);
         DrawCompactSettingCheckbox("声援", "声援 · 好了就放：兽灵之心为 0 时正常判断；兽灵之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用声援（44904）。", nameof(configuration.AutoCheerEnabled), configuration.AutoCheerEnabled);
+
+        var autoRecoveryItemEnabled = configuration.AutoRecoveryItemEnabled;
+        if (ImGui.Checkbox("低血量自动使用恢复药", ref autoRecoveryItemEnabled))
+        {
+            configuration.AutoRecoveryItemEnabled = autoRecoveryItemEnabled;
+            configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("仅在斗兽奇弈战斗中生效；自身血量低于阈值时按 3级 → 2级 → 1级优先级使用奇弈恢复药。默认关闭。");
+        }
+        if (configuration.AutoRecoveryItemEnabled)
+        {
+            ImGui.SetNextItemWidth(70f);
+            var recoveryThreshold = configuration.AutoRecoveryItemHpThreshold;
+            if (ImGui.InputFloat("恢复药血量阈值", ref recoveryThreshold, 0f, 0f, "%.0f%%"))
+            {
+                configuration.AutoRecoveryItemHpThreshold = Math.Clamp(recoveryThreshold, 1f, 100f);
+                configuration.Save();
+            }
+        }
 
         if (compactFinalStrike)
         {
@@ -2177,6 +2197,8 @@ public sealed class PluginUI
             case nameof(configuration.AutoCheerEnabled): configuration.AutoCheerEnabled = !configuration.AutoCheerEnabled; break;
             case nameof(configuration.AutoWhistleEnabled): configuration.AutoWhistleEnabled = !configuration.AutoWhistleEnabled; break;
             case nameof(configuration.AutoReleaseEnabled): configuration.AutoReleaseEnabled = !configuration.AutoReleaseEnabled; break;
+            case nameof(configuration.AutoSafeShieldEnabled): configuration.AutoSafeShieldEnabled = !configuration.AutoSafeShieldEnabled; break;
+            case nameof(configuration.AutoRecoveryItemEnabled): configuration.AutoRecoveryItemEnabled = !configuration.AutoRecoveryItemEnabled; break;
         }
         configuration.Save();
     }
@@ -2589,6 +2611,9 @@ public sealed class PluginUI
                 case nameof(configuration.AutoCheerEnabled):
                     configuration.AutoCheerEnabled = value;
                     break;
+                case nameof(configuration.AutoSafeShieldEnabled):
+                    configuration.AutoSafeShieldEnabled = value;
+                    break;
                 case nameof(configuration.ShowGaugeInOverlay):
                     configuration.ShowGaugeInOverlay = value;
                     break;
@@ -2671,7 +2696,7 @@ public sealed class PluginUI
         DrawDebugActionRow(
             "##DebugProjectDataType",
             ref debugProjectDataType,
-            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0",
+            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0魔兽恢复药扫描\0内容道具容器扫描\0XBM界面扫描\0XBM道具结构\0",
             "读取##DebugProjectData",
             RunDebugProjectData);
 
@@ -2736,6 +2761,10 @@ public sealed class PluginUI
             5 => debugDataService.FindBeastmasterAttributes(),
             6 => debugDataService.GetBeastmasterCatalogProbe(),
             7 => debugDataService.FindRecommendedEquipmentIds(),
+            8 => debugDataService.FindBeastmasterRecoveryItems(),
+            9 => debugDataService.FindContentInventoryContainers(),
+            10 => debugDataService.GetXbmAddonProbe(),
+            11 => debugDataService.GetXbmItemStructureProbe(),
             _ => "未知项目资料类型。",
         });
     }

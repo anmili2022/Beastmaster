@@ -9,7 +9,10 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private IDalamudPluginInterface? pluginInterface;
 
-    public int Version { get; set; } = 25;
+    [NonSerialized]
+    private DateTime lastSaveFailureUtc = DateTime.MinValue;
+
+    public int Version { get; set; } = 27;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -40,6 +43,9 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool AutoReleaseEnabled { get; set; } = true;
     public bool AutoDrumEnabled { get; set; }
     public bool AutoCheerEnabled { get; set; }
+    public bool AutoSafeShieldEnabled { get; set; }
+    public bool AutoRecoveryItemEnabled { get; set; }
+    public float AutoRecoveryItemHpThreshold { get; set; } = 30f;
     public bool WhistleRotationEnabled { get; set; }
     public bool ForceCaptureEnabled { get; set; }
     public bool ActiveAttackEnabled { get; set; }
@@ -259,6 +265,21 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             Save();
         }
 
+        if (Version < 26)
+        {
+            AutoSafeShieldEnabled = false;
+            Version = 26;
+            Save();
+        }
+
+        if (Version < 27)
+        {
+            AutoRecoveryItemEnabled = false;
+            AutoRecoveryItemHpThreshold = 30f;
+            Version = 27;
+            Save();
+        }
+
         if (RuleSets.Count == 0)
         {
             RuleSets.Add(BeastmasterRuleSetDefinition.CreateBuiltInArenaRules(
@@ -278,10 +299,30 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         AutoFinalStrikeWhistleOneHpThreshold = Math.Clamp(AutoFinalStrikeWhistleOneHpThreshold, 1f, 100f);
         AutoFinalStrikeWhistleTwoHpThreshold = Math.Clamp(AutoFinalStrikeWhistleTwoHpThreshold, 1f, 100f);
         AutoFinalStrikeWhistleThreeHpThreshold = Math.Clamp(AutoFinalStrikeWhistleThreeHpThreshold, 1f, 100f);
+        AutoRecoveryItemHpThreshold = Math.Clamp(AutoRecoveryItemHpThreshold, 1f, 100f);
     }
 
     public void Save()
     {
-        pluginInterface?.SavePluginConfig(this);
+        if (pluginInterface == null)
+        {
+            return;
+        }
+
+        try
+        {
+            pluginInterface.SavePluginConfig(this);
+        }
+        catch (Exception ex)
+        {
+            var now = DateTime.UtcNow;
+            if (now - lastSaveFailureUtc >= TimeSpan.FromSeconds(5))
+            {
+                lastSaveFailureUtc = now;
+                DalamudApi.Log.Error(ex,
+                    "Beastmaster 配置保存失败。请检查 pluginConfigs\\Beastmaster.json 的写入权限。",
+                    Array.Empty<object>());
+            }
+        }
     }
 }
