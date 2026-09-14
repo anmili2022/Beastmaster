@@ -12,7 +12,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private DateTime lastSaveFailureUtc = DateTime.MinValue;
 
-    public int Version { get; set; } = 27;
+    public int Version { get; set; } = 30;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -277,6 +277,48 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             AutoRecoveryItemEnabled = false;
             AutoRecoveryItemHpThreshold = 30f;
             Version = 27;
+            Save();
+        }
+
+        if (Version < 28)
+        {
+            foreach (var rs in RuleSets)
+                foreach (var r in rs.Rules)
+                {
+                    if (r.ActionType == 0) r.ActionType = BeastmasterRuleActionType.Skill;
+                }
+            Version = 28;
+            Save();
+        }
+
+        if (Version < 29)
+        {
+            foreach (var rs in RuleSets)
+                foreach (var rule in rs.Rules)
+                    if (rule.ActionType == BeastmasterRuleActionType.CrucibleItem
+                        && rule.CrucibleItemId == 128)
+                        rule.CrucibleItemType = BeastmasterCrucibleItemType.Fang;
+            Version = 29;
+            Save();
+        }
+
+        if (Version < 30)
+        {
+            var defaultRuleSet = RuleSets.FirstOrDefault(ruleSet => ruleSet.Name == "默认规则集");
+            if (defaultRuleSet != null && !defaultRuleSet.Rules.Any(rule => rule.Name == "最终爆发-1层"))
+            {
+                defaultRuleSet.Rules.Add(new BeastmasterRuleDefinition
+                {
+                    Name = "最终爆发-1层",
+                    Enabled = true,
+                    ConditionType = BeastmasterRuleConditionType.TargetDataId,
+                    DataId = 19344,
+                    ActionType = BeastmasterRuleActionType.CrucibleItem,
+                    CrucibleItemType = BeastmasterCrucibleItemType.Fang,
+                });
+            }
+
+            Version = 30;
             Save();
         }
 

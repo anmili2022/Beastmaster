@@ -33,7 +33,8 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         var questService = new BeastmasterQuestService();
         countdownService = new BeastmasterCountdownService(Configuration);
         sequenceService = new BeastmasterSequenceService(Configuration, countdownService);
-        ruleService = new BeastmasterRuleService(Configuration);
+        var crucibleItemService = new BeastmasterCrucibleItemService();
+        ruleService = new BeastmasterRuleService(Configuration, crucibleItemService);
         var debugDataService = new BeastmasterDebugDataService(countdownService);
         navigationService = new BeastmasterNavigationService(pluginInterface, Configuration);
         catalogChatTracker = new BeastmasterCatalogChatTracker(Configuration, progressService);
@@ -42,11 +43,11 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
 
         DalamudApi.Commands.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "打开驯兽师助手；子命令：输出、暂停、恢复、关闭。",
+            HelpMessage = "打开驯兽师助手；子命令：输出、暂停、恢复、关闭、倒计时 [秒数]、取消倒计时。",
         });
         DalamudApi.Commands.AddHandler(ChineseCommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "打开驯兽师助手；子命令：输出、暂停、恢复、关闭。",
+            HelpMessage = "打开驯兽师助手；子命令：输出、暂停、恢复、关闭、倒计时 [秒数]、取消倒计时。",
         });
 
         pluginInterface.UiBuilder.Draw += ui.Draw;
@@ -73,7 +74,40 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
-        switch (args.Trim())
+        var trimmed = args.Trim();
+
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            ui.OpenMainWindow();
+            return;
+        }
+
+        if (trimmed.StartsWith("倒计时", StringComparison.Ordinal) || trimmed.StartsWith("countdown", StringComparison.OrdinalIgnoreCase))
+        {
+            var remainder = trimmed.Length > 3 ? trimmed[3..].Trim() : string.Empty;
+            if (string.IsNullOrEmpty(remainder))
+            {
+                countdownService.StartCustomCountdown(10f);
+            }
+            else if (float.TryParse(remainder, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+            {
+                countdownService.StartCustomCountdown(seconds);
+            }
+            else
+            {
+                DalamudApi.ChatGui.Print("[驯兽师助手] 用法：/驯兽师 倒计时 [秒数]（默认 10 秒）");
+            }
+
+            return;
+        }
+
+        if (trimmed.StartsWith("取消倒计时", StringComparison.Ordinal) || trimmed.StartsWith("cancelcountdown", StringComparison.OrdinalIgnoreCase))
+        {
+            countdownService.CancelCustomCountdown();
+            return;
+        }
+
+        switch (trimmed)
         {
             case "输出":
             case "output":

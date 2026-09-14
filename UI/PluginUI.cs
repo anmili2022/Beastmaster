@@ -1120,7 +1120,7 @@ public sealed class PluginUI
 
         var conditionType = (int)rule.ConditionType;
         ImGui.SetNextItemWidth(190f);
-        if (ImGui.Combo("检测类型", ref conditionType, "自身 BUFF\0目标 BUFF\0DataID BUFF\0DataID 读条\0目标读条\0"))
+        if (ImGui.Combo("检测类型", ref conditionType, "自身 BUFF\0目标 BUFF\0DataID BUFF\0DataID 读条\0目标读条\0目标 DATAID\0"))
         {
             rule.ConditionType = (BeastmasterRuleConditionType)conditionType;
             configuration.Save();
@@ -1146,21 +1146,45 @@ public sealed class PluginUI
             }
         }
         var conditionId = (int)Math.Min(rule.ConditionId, int.MaxValue);
-        ImGui.SetNextItemWidth(190f);
-        if (ImGui.InputInt(rule.IsStatusRule ? "BUFFID" : "读条 ID", ref conditionId, 1, 100))
+        if (!rule.IsTargetDataIdRule)
         {
-            rule.ConditionId = (uint)Math.Max(0, conditionId);
+            ImGui.SetNextItemWidth(190f);
+            if (ImGui.InputInt(rule.IsStatusRule ? "BUFFID" : "读条 ID", ref conditionId, 1, 100))
+            {
+                rule.ConditionId = (uint)Math.Max(0, conditionId);
+                configuration.Save();
+            }
+        }
+
+        var actionType = (int)rule.ActionType;
+        ImGui.SetNextItemWidth(120f);
+        if (ImGui.Combo("执行方式", ref actionType, "技能\0奇弈道具\0"))
+        {
+            rule.ActionType = (BeastmasterRuleActionType)actionType;
             configuration.Save();
         }
 
-        var actionIndex = Array.FindIndex(BeastmasterRuleActions.Supported, action => action.ActionId == rule.ActionId);
-        if (actionIndex < 0) actionIndex = 0;
-        var actionNames = string.Join('\0', BeastmasterRuleActions.Supported.Select(action => $"{action.Name} ({action.ActionId})")) + '\0';
-        ImGui.SetNextItemWidth(260f);
-        if (ImGui.Combo("选择技能", ref actionIndex, actionNames))
+        if (rule.ActionType == BeastmasterRuleActionType.CrucibleItem)
         {
-            rule.ActionId = BeastmasterRuleActions.Supported[actionIndex].ActionId;
-            configuration.Save();
+            var itemType = (int)rule.CrucibleItemType;
+            ImGui.SetNextItemWidth(190f);
+            if (ImGui.Combo("奇弈道具", ref itemType, "恢复药（321优先）\0各种牙\0"))
+            {
+                rule.CrucibleItemType = (BeastmasterCrucibleItemType)itemType;
+                configuration.Save();
+            }
+        }
+        else
+        {
+            var actionIndex = Array.FindIndex(BeastmasterRuleActions.Supported, action => action.ActionId == rule.ActionId);
+            if (actionIndex < 0) actionIndex = 0;
+            var actionNames = string.Join('\0', BeastmasterRuleActions.Supported.Select(action => $"{action.Name} ({action.ActionId})")) + '\0';
+            ImGui.SetNextItemWidth(260f);
+            if (ImGui.Combo("选择技能", ref actionIndex, actionNames))
+            {
+                rule.ActionId = BeastmasterRuleActions.Supported[actionIndex].ActionId;
+                configuration.Save();
+            }
         }
 
         if (!rule.TryValidate(out var error)) ImGui.TextColored(new Vector4(1f, 0.4f, 0.3f, 1f), error);
@@ -1176,7 +1200,10 @@ public sealed class PluginUI
             StatusCondition = source.StatusCondition,
             DataId = source.DataId,
             ConditionId = source.ConditionId,
+            ActionType = source.ActionType,
             ActionId = source.ActionId,
+            CrucibleItemType = source.CrucibleItemType,
+            CrucibleItemId = source.CrucibleItemId,
         };
 
     private static string GetRuleSummary(BeastmasterRuleDefinition rule)
@@ -1188,11 +1215,16 @@ public sealed class PluginUI
             BeastmasterRuleConditionType.DataIdStatus => $"DataID {rule.DataId}",
             BeastmasterRuleConditionType.DataIdCast => $"DataID {rule.DataId}",
             BeastmasterRuleConditionType.TargetCast => "目标",
+            BeastmasterRuleConditionType.TargetDataId => $"目标DataID {rule.DataId}",
             _ => "未知",
         };
         var condition = rule.IsStatusRule
             ? $"{(rule.StatusCondition == BeastmasterRuleStatusCondition.Present ? "存在" : "缺少")} BUFF {rule.ConditionId}"
-            : $"读条 {rule.ConditionId}";
+            : rule.IsTargetDataIdRule
+                ? ""
+                : $"读条 {rule.ConditionId}";
+        if (rule.ActionType == BeastmasterRuleActionType.CrucibleItem)
+            return $"{actor}{condition} -> 道具 {BeastmasterRuleActions.GetCrucibleItemTypeName(rule.CrucibleItemType)}";
         var action = BeastmasterRuleActions.Supported.FirstOrDefault(item => item.ActionId == rule.ActionId);
         return $"{actor}{condition} -> {(string.IsNullOrEmpty(action.Name) ? rule.ActionId.ToString() : action.Name)}";
     }
@@ -2696,7 +2728,7 @@ public sealed class PluginUI
         DrawDebugActionRow(
             "##DebugProjectDataType",
             ref debugProjectDataType,
-            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0魔兽恢复药扫描\0内容道具容器扫描\0XBM界面扫描\0XBM道具结构\0",
+            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0魔兽恢复药扫描\0内容道具容器扫描\0XBM界面扫描\0XBM道具结构\0奇弈道具列表\0",
             "读取##DebugProjectData",
             RunDebugProjectData);
 
@@ -2765,6 +2797,7 @@ public sealed class PluginUI
             9 => debugDataService.FindContentInventoryContainers(),
             10 => debugDataService.GetXbmAddonProbe(),
             11 => debugDataService.GetXbmItemStructureProbe(),
+            12 => debugDataService.GetCrucibleItemList(),
             _ => "未知项目资料类型。",
         });
     }

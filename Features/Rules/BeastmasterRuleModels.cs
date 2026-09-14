@@ -10,6 +10,19 @@ public enum BeastmasterRuleConditionType
     DataIdStatus,
     DataIdCast,
     TargetCast,
+    TargetDataId,
+}
+
+public enum BeastmasterRuleActionType
+{
+    Skill,
+    CrucibleItem,
+}
+
+public enum BeastmasterCrucibleItemType
+{
+    Recovery,
+    Fang,
 }
 
 public enum BeastmasterRuleStatusCondition
@@ -39,9 +52,12 @@ public sealed class BeastmasterRuleDefinition
     public string Name { get; set; } = "新规则";
     public BeastmasterRuleConditionType ConditionType { get; set; }
     public BeastmasterRuleStatusCondition StatusCondition { get; set; } = BeastmasterRuleStatusCondition.Missing;
+    public BeastmasterRuleActionType ActionType { get; set; } = BeastmasterRuleActionType.Skill;
+    public BeastmasterCrucibleItemType CrucibleItemType { get; set; } = BeastmasterCrucibleItemType.Recovery;
     public uint DataId { get; set; }
     public uint ConditionId { get; set; }
     public uint ActionId { get; set; } = 44879;
+    public uint CrucibleItemId { get; set; }
 
     public bool TryValidate(out string error)
     {
@@ -58,7 +74,7 @@ public sealed class BeastmasterRuleDefinition
             return false;
         }
 
-        if (ConditionId == 0)
+        if (ConditionType != BeastmasterRuleConditionType.TargetDataId && ConditionId == 0)
         {
             error = IsStatusRule ? "BUFFID 必须大于 0。" : "读条 ID 必须大于 0。";
             return false;
@@ -70,7 +86,7 @@ public sealed class BeastmasterRuleDefinition
             return false;
         }
 
-        if (!BeastmasterRuleActions.IsSupported(ActionId))
+        if (ActionType == BeastmasterRuleActionType.Skill && !BeastmasterRuleActions.IsSupported(ActionId))
         {
             error = $"不支持规则技能 {ActionId}。";
             return false;
@@ -86,7 +102,11 @@ public sealed class BeastmasterRuleDefinition
 
     public bool RequiresDataId
         => ConditionType is BeastmasterRuleConditionType.DataIdStatus
-            or BeastmasterRuleConditionType.DataIdCast;
+            or BeastmasterRuleConditionType.DataIdCast
+            or BeastmasterRuleConditionType.TargetDataId;
+
+    public bool IsTargetDataIdRule
+        => ConditionType is BeastmasterRuleConditionType.TargetDataId;
 }
 
 [Serializable]
@@ -131,6 +151,15 @@ public sealed class BeastmasterRuleSetDefinition
                     StatusCondition = BeastmasterRuleStatusCondition.Missing,
                     ConditionId = 5586,
                     ActionId = 46750,
+                },
+                new()
+                {
+                    Name = "最终爆发-1层",
+                    Enabled = true,
+                    ConditionType = BeastmasterRuleConditionType.TargetDataId,
+                    DataId = 19344,
+                    ActionType = BeastmasterRuleActionType.CrucibleItem,
+                    CrucibleItemType = BeastmasterCrucibleItemType.Fang,
                 },
             ],
         };
@@ -204,9 +233,12 @@ public sealed class BeastmasterRuleSetDefinition
                 .AppendLine($"启用|{rule.Enabled}")
                 .AppendLine($"检测|{rule.ConditionType}")
                 .AppendLine($"条件|{rule.StatusCondition}")
+                .AppendLine($"执行|{rule.ActionType}")
+                .AppendLine($"奇弈道具类型|{rule.CrucibleItemType}")
                 .AppendLine($"DataId|{rule.DataId}")
                 .AppendLine($"检测ID|{rule.ConditionId}")
-                .AppendLine($"技能|{rule.ActionId}");
+                .AppendLine($"技能|{rule.ActionId}")
+                .AppendLine($"奇弈道具|{rule.CrucibleItemId}");
         }
 
         return builder.ToString().TrimEnd();
@@ -287,9 +319,12 @@ public sealed class BeastmasterRuleSetDefinition
             case "启用" when bool.TryParse(value, out var enabled): rule.Enabled = enabled; return true;
             case "检测" when Enum.TryParse<BeastmasterRuleConditionType>(value, out var condition): rule.ConditionType = condition; return true;
             case "条件" when Enum.TryParse<BeastmasterRuleStatusCondition>(value, out var status): rule.StatusCondition = status; return true;
+            case "执行" when Enum.TryParse<BeastmasterRuleActionType>(value, out var actionType): rule.ActionType = actionType; return true;
+            case "奇弈道具类型" when Enum.TryParse<BeastmasterCrucibleItemType>(value, out var itemType): rule.CrucibleItemType = itemType; return true;
             case "DataId" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var dataId): rule.DataId = dataId; return true;
             case "检测ID" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var conditionId): rule.ConditionId = conditionId; return true;
             case "技能" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var actionId): rule.ActionId = actionId; return true;
+            case "奇弈道具" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var itemId): rule.CrucibleItemId = itemId; return true;
             default: return false;
         }
     }
@@ -322,4 +357,34 @@ public static class BeastmasterRuleActions
     public static bool RequiresTarget(uint actionId)
         => actionId is 44879 or 44880 or 44883 or 44884 or 44885 or 44887 or 44888 or 44889
             or 44890 or 44891 or 44893 or 44930 or 44931 or 44932 or 44933 or 47093;
+
+    public static bool IsCrucibleItemId(uint itemId)
+        => itemId is >= 76 and <= 143;
+
+    public static bool IsCrucibleItemFriendly(uint itemId)
+        => itemId is 76 or 77 or 78;
+
+    public static string GetCrucibleItemTypeName(BeastmasterCrucibleItemType itemType)
+        => itemType == BeastmasterCrucibleItemType.Recovery ? "恢复药" : "各种牙";
+
+    public static string GetCrucibleItemName(uint itemId)
+        => itemId switch
+        {
+            76 => "1级恢复药",
+            77 => "2级恢复药",
+            78 => "3级恢复药",
+            128 => "火之牙",
+            129 => "冰之牙",
+            131 => "雷之牙",
+            133 => "风之牙",
+            138 => "时之沙",
+            _ => $"奇弈道具 {itemId}",
+        };
+
+    public static readonly uint[] KnownCrucibleItemIds =
+    [
+        76, 77, 78,
+        128, 129, 131, 133,
+        138,
+    ];
 }

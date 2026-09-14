@@ -1246,6 +1246,74 @@ public sealed class BeastmasterDebugDataService
         return builder.ToString().TrimEnd();
     }
 
+    public unsafe string GetCrucibleItemList()
+    {
+        var builder = new StringBuilder()
+            .AppendLine("类型: 奇弈道具列表")
+            .AppendLine("模式: 只读，不触发回调，不使用道具，不写入内存")
+            .AppendLine("目标: 列出当前界面中所有奇弈道具的 ID 和名称")
+            .AppendLine($"TerritoryType: {DalamudApi.ClientState.TerritoryType}")
+            .AppendLine();
+
+        var addon = DalamudApi.GameGui.GetAddonByName("XBMContentsMainHUD", 1);
+        if (addon.IsNull || !addon.IsVisible)
+        {
+            builder.AppendLine("XBMContentsMainHUD 不存在或不可见。");
+            builder.AppendLine("提示: 请先进入斗兽奇弈并打开奇弈道具界面。");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine($"XBMContentsMainHUD Address=0x{addon.Address.ToInt64():X}");
+        builder.AppendLine($"  AtkValuesCount={addon.AtkValuesCount}");
+        builder.AppendLine();
+
+        var atkValues = addon.AtkValues.ToArray();
+        var itemCount = 0;
+        var itemIds = new HashSet<uint>();
+        var index = 9;
+        builder.AppendLine("奇弈道具列表:");
+        while (index + 4 < atkValues.Length)
+        {
+            try
+            {
+                var exists = atkValues[index].GetValue()?.ToString() == "True";
+                var usable = atkValues[index + 1].GetValue()?.ToString() == "True";
+                var iconId = atkValues[index + 2].GetValue();
+                var itemIdRaw = atkValues[index + 3].GetValue();
+                var name = atkValues[index + 4].GetValue()?.ToString() ?? string.Empty;
+
+                if (itemIdRaw != null
+                    && uint.TryParse(itemIdRaw.ToString(), out var itemId)
+                    && itemId is >= 76 and <= 143
+                    && itemIds.Add(itemId))
+                {
+                    var status = exists ? (usable ? "可用" : "不可用") : "不存在";
+                    builder.AppendLine($"  [{itemId}] {name} | 状态={status} | 图标={iconId}");
+                    itemCount++;
+                }
+            }
+            catch
+            {
+                // Skip invalid entries
+            }
+
+            index += 5;
+        }
+
+        if (itemCount == 0)
+        {
+            builder.AppendLine("  未找到奇弈道具。");
+            builder.AppendLine("提示: 请先进入斗兽奇弈并打开奇弈道具界面。");
+        }
+        else
+        {
+            builder.AppendLine();
+            builder.AppendLine($"共找到 {itemCount} 个奇弈道具。");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
     private static string JoinLines(params string[] lines)
         => string.Join(Environment.NewLine, lines);
 
