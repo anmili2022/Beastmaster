@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Text;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Dalamud.Game.NativeWrapper;
 using Dalamud.Game.Inventory;
 
@@ -414,6 +415,382 @@ public sealed class BeastmasterDebugDataService
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string GetBeastLevelExperienceProbe()
+    {
+        const int pageValueIndex = 10;
+        const int firstEntryValueIndex = 24;
+        const int entryStride = 8;
+        const int entriesPerPage = 25;
+        const int agentDumpSize = 0x400;
+
+        var builder = new StringBuilder()
+            .AppendLine("类型: 魔兽等级经验结构")
+            .AppendLine("模式: 只读，不触发回调，不翻页，不写入内存")
+            .AppendLine("目标: 定位每只魔兽的当前等级、当前经验和升级所需经验字段")
+            .AppendLine("采集方法: 打开魔兽图鉴后读取；建议在同一只魔兽获得经验前后各采集一次并对比")
+            .AppendLine();
+
+        var addonAddress = DalamudApi.GameGui.GetAddonByName("XBMMonsterNotebook", 1).Address;
+        var addon = (AtkUnitBase*)addonAddress;
+        if (addon == null || !addon->IsVisible || addon->AtkValues == null)
+        {
+            builder.AppendLine("XBMMonsterNotebook 不存在或不可见。")
+                .AppendLine("请先在游戏中打开魔兽图鉴并保持窗口可见。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var page = addon->AtkValuesCount > pageValueIndex
+            ? addon->AtkValues[pageValueIndex].UInt
+            : uint.MaxValue;
+        builder.AppendLine($"Addon Address=0x{addonAddress.ToInt64():X}")
+            .AppendLine($"AtkValues Address=0x{(nint)addon->AtkValues:X} | AtkValueSize=0x{sizeof(AtkValue):X}")
+            .AppendLine($"AtkValuesCount={addon->AtkValuesCount} | Page={page}")
+            .AppendLine($"详情内部编号 AtkValue: 0x{(nint)(addon->AtkValues + 227):X} | 该字段可能滞后，不用于同步")
+            .AppendLine($"选中显示编号 AtkValue: 0x{(nint)(addon->AtkValues + 229):X} | 与 Value[231] 图标共同校验")
+            .AppendLine($"选中兽级 AtkValue: 0x{(nint)(addon->AtkValues + 258):X} | 类型=ManagedString，数值请读取 Value[258]")
+            .AppendLine($"选中当前经验 AtkValue: 0x{(nint)(addon->AtkValues + 261):X} | UInt数值: 0x{(nint)(&addon->AtkValues[261].UInt):X}")
+            .AppendLine($"选中经验上限 AtkValue: 0x{(nint)(addon->AtkValues + 262):X} | UInt数值: 0x{(nint)(&addon->AtkValues[262].UInt):X}")
+            .AppendLine()
+            .AppendLine("当前页条目字段（每项 8 个 AtkValue）:");
+
+        for (var entryIndex = 0; entryIndex < entriesPerPage; entryIndex++)
+        {
+            var valueIndex = firstEntryValueIndex + entryIndex * entryStride;
+            if (valueIndex + entryStride > addon->AtkValuesCount)
+            {
+                break;
+            }
+
+            var number = page <= 1 ? 1 + (int)page * entriesPerPage + entryIndex : entryIndex + 1;
+            builder.AppendLine($"图鉴 {number:00} | Value[{valueIndex}..{valueIndex + entryStride - 1}]");
+            for (var field = 0; field < entryStride; field++)
+            {
+                var value = addon->AtkValues[valueIndex + field];
+                builder.AppendLine($"  +{field}: {FormatAtkValue(value)}");
+            }
+        }
+
+        builder.AppendLine().AppendLine("图鉴非条目字段:");
+        for (var index = 0; index < addon->AtkValuesCount; index++)
+        {
+            if (index >= firstEntryValueIndex
+                && index < firstEntryValueIndex + entriesPerPage * entryStride)
+            {
+                continue;
+            }
+
+            builder.AppendLine($"  Value[{index}]: {FormatAtkValue(addon->AtkValues[index])}");
+        }
+
+        var agentModule = AgentModule.Instance();
+        var agent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)500);
+        builder.AppendLine().AppendLine("Agent 500 候选整数（前 0x400 字节）:");
+        if (agent == null)
+        {
+            builder.AppendLine("Agent 500 不可用。");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine($"Agent Address=0x{(nint)agent:X}");
+        for (var offset = 0; offset < agentDumpSize; offset += 16)
+        {
+            builder.Append($"  +0x{offset:X3}:");
+            for (var column = 0; column < 16; column += 4)
+            {
+                var value = *(uint*)(agent + offset + column);
+                builder.Append($" {value,10}");
+            }
+            builder.AppendLine();
+        }
+
+        AppendDetailProgressionProbe(builder, agentModule);
+        AppendPetPartyProgressionProbe(builder, agentModule);
+        AppendXbmAddonVisibility(builder);
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string GetBeastResultProgressionProbe()
+    {
+        const int agentDumpSize = 0x1000;
+        var builder = new StringBuilder()
+            .AppendLine("类型: 斗兽结算等级经验")
+            .AppendLine("模式: 只读，不触发回调，不退出结算页，不写入内存")
+            .AppendLine("目标: 从每轮 XBMResult 结算页定位参战魔兽的结算后等级与经验")
+            .AppendLine("当前验证值: 图鉴 02 松鼠种，等级 6，经验 9/100")
+            .AppendLine();
+
+        var resultAddress = DalamudApi.GameGui.GetAddonByName("XBMResult", 1).Address;
+        var result = (AtkUnitBase*)resultAddress;
+        if (result == null || !result->IsVisible || result->AtkValues == null)
+        {
+            builder.AppendLine("XBMResult 不存在或不可见。请在一轮斗兽结束后的经验结算页保持窗口可见后读取。");
+            AppendXbmAddonVisibility(builder);
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine($"Result Addon Address=0x{resultAddress.ToInt64():X}")
+            .AppendLine($"Result AtkValuesCount={result->AtkValuesCount}")
+            .AppendLine("Result AtkValues:");
+        for (var index = 0; index < result->AtkValuesCount; index++)
+        {
+            builder.AppendLine($"  ResultValue[{index}]: {FormatAtkValue(result->AtkValues[index])}");
+        }
+
+        var agentModule = AgentModule.Instance();
+        var agent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)505);
+        builder.AppendLine().AppendLine("Agent 505 候选整数（前 0x1000 字节）:");
+        if (agent == null)
+        {
+            builder.AppendLine("Agent 505 不可用。");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine($"Agent Address=0x{(nint)agent:X}");
+        for (var offset = 0; offset < agentDumpSize; offset += 4)
+        {
+            var value = *(uint*)(agent + offset);
+            if (value is 6 or 9 or 100
+                || (value >> 16) is 6 or 9 or 100
+                || (value & 0xFFFF) is 6 or 9 or 100)
+            {
+                builder.AppendLine($"  候选 +0x{offset:X3}: UInt={value} | High16={value >> 16} | Low16={value & 0xFFFF}");
+            }
+        }
+
+        builder.AppendLine("Agent 505 完整整数:");
+        for (var offset = 0; offset < agentDumpSize; offset += 16)
+        {
+            builder.Append($"  +0x{offset:X3}:");
+            for (var column = 0; column < 16; column += 4)
+            {
+                var value = *(uint*)(agent + offset + column);
+                builder.Append($" {value,10}");
+            }
+            builder.AppendLine();
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string GetPetPartyStructureProbe()
+    {
+        const int memberCountIndex = 5;
+        const int firstMemberIndex = 6;
+        const int memberStride = 77;
+        const int maximumSlots = 15;
+        const uint iconBase = 242000;
+
+        var builder = new StringBuilder()
+            .AppendLine("类型: 魔兽编队结构")
+            .AppendLine("模式: 只读，不触发回调，不增删成员，不写入内存")
+            .AppendLine("目标: 识别当前奇盘、编队人数、容量和成员顺序")
+            .AppendLine($"TerritoryType: {DalamudApi.ClientState.TerritoryType}")
+            .AppendLine();
+
+        var addonAddress = DalamudApi.GameGui.GetAddonByName("XBMPetParty", 1).Address;
+        var addon = (AtkUnitBase*)addonAddress;
+        if (addon == null || !addon->IsVisible || addon->AtkValues == null)
+        {
+            builder.AppendLine("XBMPetParty 不存在或不可见。请保持挑战前的魔兽编队窗口打开。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var count = addon->AtkValuesCount > memberCountIndex
+            ? ReadDebugNumber(addon->AtkValues[memberCountIndex])
+            : uint.MaxValue;
+        builder.AppendLine($"Address=0x{addonAddress.ToInt64():X}")
+            .AppendLine($"AtkValuesCount={addon->AtkValuesCount}")
+            .AppendLine($"当前成员数候选 Value[5]={count}")
+            .AppendLine()
+            .AppendLine("头部字段 Value[0..5]:");
+        for (var index = 0; index <= memberCountIndex && index < addon->AtkValuesCount; index++)
+        {
+            builder.AppendLine($"  Value[{index}]: {FormatAtkValue(addon->AtkValues[index])}");
+        }
+
+        builder.AppendLine().AppendLine("成员列表:");
+        var parsedMembers = 0;
+        for (var slot = 0; slot < maximumSlots; slot++)
+        {
+            var start = firstMemberIndex + slot * memberStride;
+            if (start + memberStride > addon->AtkValuesCount)
+            {
+                break;
+            }
+
+            var level = ReadDebugText(addon->AtkValues[start]);
+            var icon = ReadDebugNumber(addon->AtkValues[start + 1]);
+            var name = ReadDebugText(addon->AtkValues[start + 3]);
+            if (icon is > iconBase and <= iconBase + 50)
+            {
+                parsedMembers++;
+                builder.AppendLine($"  位置 {slot + 1:00}: 图鉴 {icon - iconBase:00} | {name} | 兽级 {level} | Icon={icon}");
+            }
+            else
+            {
+                builder.AppendLine($"  位置 {slot + 1:00}: 空或无效 | Icon={icon} | Name=\"{name}\" | Level=\"{level}\"");
+            }
+
+            builder.AppendLine($"    块头: +0={FormatAtkValue(addon->AtkValues[start])} | +1={FormatAtkValue(addon->AtkValues[start + 1])} | +2={FormatAtkValue(addon->AtkValues[start + 2])} | +3={FormatAtkValue(addon->AtkValues[start + 3])}");
+            builder.AppendLine($"    块尾: +72={FormatAtkValue(addon->AtkValues[start + 72])} | +73={FormatAtkValue(addon->AtkValues[start + 73])} | +74={FormatAtkValue(addon->AtkValues[start + 74])} | +75={FormatAtkValue(addon->AtkValues[start + 75])} | +76={FormatAtkValue(addon->AtkValues[start + 76])}");
+        }
+
+        builder.AppendLine()
+            .AppendLine($"解析成员数={parsedMembers} | Value[5]={count}")
+            .AppendLine("尾部字段:");
+        var memberAreaEnd = firstMemberIndex + maximumSlots * memberStride;
+        for (var index = memberAreaEnd; index < addon->AtkValuesCount; index++)
+        {
+            builder.AppendLine($"  Value[{index}]: {FormatAtkValue(addon->AtkValues[index])}");
+        }
+
+        builder.AppendLine()
+            .AppendLine("采集说明: 请分别在第一盘、第二盘、第三盘、高段第一盘、高段第二盘的编队界面读取，并注明界面显示容量。");
+        return builder.ToString().TrimEnd();
+    }
+
+    private static uint ReadDebugNumber(AtkValue value)
+        => value.TypeCode() switch
+        {
+            3 when value.Int >= 0 => (uint)value.Int,
+            4 or 5 => value.UInt,
+            8 or 10 when uint.TryParse(value.String.ToString(), out var parsed) => parsed,
+            _ => uint.MaxValue,
+        };
+
+    private static string ReadDebugText(AtkValue value)
+        => value.TypeCode() is 8 or 10 ? value.String.ToString() ?? string.Empty : string.Empty;
+
+    private static unsafe void AppendDetailProgressionProbe(StringBuilder builder, AgentModule* agentModule)
+    {
+        const int agentDumpSize = 0x400;
+        builder.AppendLine().AppendLine("宝宝详情 XBM 数据:");
+        var detailAddress = DalamudApi.GameGui.GetAddonByName("XBMBattleMonsterDetail", 1).Address;
+        var detail = (AtkUnitBase*)detailAddress;
+        if (detail == null || !detail->IsVisible || detail->AtkValues == null)
+        {
+            builder.AppendLine("XBMBattleMonsterDetail 不存在或不可见。请在原生图鉴中点开目标宝宝详情后重试。");
+        }
+        else
+        {
+            builder.AppendLine($"Detail Addon Address=0x{detailAddress.ToInt64():X}")
+                .AppendLine($"Detail AtkValuesCount={detail->AtkValuesCount}");
+            for (var index = 0; index < detail->AtkValuesCount; index++)
+            {
+                builder.AppendLine($"  DetailValue[{index}]: {FormatAtkValue(detail->AtkValues[index])}");
+            }
+        }
+
+        builder.AppendLine().AppendLine("Agent 499 候选整数（前 0x400 字节）:");
+        var detailAgent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)499);
+        if (detailAgent == null)
+        {
+            builder.AppendLine("Agent 499 不可用。");
+            return;
+        }
+
+        builder.AppendLine($"Agent Address=0x{(nint)detailAgent:X}");
+        for (var offset = 0; offset < agentDumpSize; offset += 16)
+        {
+            builder.Append($"  +0x{offset:X3}:");
+            for (var column = 0; column < 16; column += 4)
+            {
+                var value = *(uint*)(detailAgent + offset + column);
+                builder.Append($" {value,10}");
+            }
+            builder.AppendLine();
+        }
+    }
+
+    private static unsafe void AppendPetPartyProgressionProbe(StringBuilder builder, AgentModule* agentModule)
+    {
+        const int agentDumpSize = 0x800;
+        builder.AppendLine().AppendLine("魔兽编队 XBM 数据:");
+        var partyAddress = DalamudApi.GameGui.GetAddonByName("XBMPetParty", 1).Address;
+        var party = (AtkUnitBase*)partyAddress;
+        if (party == null || !party->IsVisible || party->AtkValues == null)
+        {
+            builder.AppendLine("XBMPetParty 不存在或不可见。请打开原生魔兽编队界面后重试。");
+        }
+        else
+        {
+            builder.AppendLine($"Party Addon Address=0x{partyAddress.ToInt64():X}")
+                .AppendLine($"Party AtkValuesCount={party->AtkValuesCount}");
+            for (var index = 0; index < party->AtkValuesCount; index++)
+            {
+                builder.AppendLine($"  PartyValue[{index}]: {FormatAtkValue(party->AtkValues[index])}");
+            }
+        }
+
+        builder.AppendLine().AppendLine("Agent 501 候选整数（前 0x800 字节）:");
+        var partyAgent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)501);
+        if (partyAgent == null)
+        {
+            builder.AppendLine("Agent 501 不可用。");
+            return;
+        }
+
+        builder.AppendLine($"Agent Address=0x{(nint)partyAgent:X}");
+        for (var offset = 0; offset < agentDumpSize; offset += 4)
+        {
+            var value = *(uint*)(partyAgent + offset);
+            if (value is 4 or 61 or 100
+                || (value >> 16) is 4 or 61 or 100
+                || (value & 0xFFFF) is 4 or 61 or 100)
+            {
+                builder.AppendLine($"  候选 +0x{offset:X3}: UInt={value} | High16={value >> 16} | Low16={value & 0xFFFF}");
+            }
+        }
+
+        builder.AppendLine("Agent 501 完整整数:");
+        for (var offset = 0; offset < agentDumpSize; offset += 16)
+        {
+            builder.Append($"  +0x{offset:X3}:");
+            for (var column = 0; column < 16; column += 4)
+            {
+                var value = *(uint*)(partyAgent + offset + column);
+                builder.Append($" {value,10}");
+            }
+            builder.AppendLine();
+        }
+    }
+
+    private static void AppendXbmAddonVisibility(StringBuilder builder)
+    {
+        builder.AppendLine().AppendLine("XBM Addon 状态:");
+        foreach (var addonName in XbmAddonNames())
+        {
+            try
+            {
+                var addon = DalamudApi.GameGui.GetAddonByName(addonName, 1);
+                builder.AppendLine(addon.IsNull
+                    ? $"  {addonName}: 不存在"
+                    : $"  {addonName}: Visible={addon.IsVisible} | Ready={addon.IsReady} | AtkValuesCount={addon.AtkValuesCount} | Address=0x{addon.Address.ToInt64():X}");
+            }
+            catch (Exception ex)
+            {
+                builder.AppendLine($"  {addonName}: 读取失败 {ex.GetType().Name}");
+            }
+        }
+    }
+
+    private static unsafe string FormatAtkValue(AtkValue value)
+    {
+        var typeCode = (int)value.Type & 0xF;
+        var text = typeCode is 8 or 10
+            ? (value.String.ToString() ?? string.Empty).Replace("\r", "\\r").Replace("\n", "\\n")
+            : string.Empty;
+        return typeCode switch
+        {
+            2 => $"Type={value.Type} Bool={value.Bool}",
+            3 => $"Type={value.Type} Int={value.Int}",
+            4 or 5 => $"Type={value.Type} UInt={value.UInt}",
+            8 or 10 => $"Type={value.Type} String=\"{text}\"",
+            _ => $"Type={value.Type} UInt={value.UInt}",
+        };
     }
 
     public string FindRecommendedEquipmentIds()

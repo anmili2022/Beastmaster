@@ -139,6 +139,71 @@ public sealed class BeastmasterProgressService
         return changed;
     }
 
+    public BeastmasterBeastProgress? GetBeastProgress(int number)
+    {
+        var characterKey = CurrentCharacterKey;
+        return characterKey.Length > 0
+            && configuration.ProgressByCharacter.TryGetValue(characterKey, out var progress)
+            && progress.BeastProgress.TryGetValue(number, out var beastProgress)
+                ? beastProgress
+                : null;
+    }
+
+    public int UpdateBeastProgress(IReadOnlyDictionary<int, (int Level, int Experience, int ExperienceRequired)> updates)
+    {
+        var characterKey = CurrentCharacterKey;
+        if (characterKey.Length == 0 || updates.Count == 0)
+        {
+            return 0;
+        }
+
+        if (!configuration.ProgressByCharacter.TryGetValue(characterKey, out var progress))
+        {
+            progress = new BeastmasterCharacterProgress();
+            configuration.ProgressByCharacter[characterKey] = progress;
+        }
+
+        progress.BeastProgress ??= [];
+        var changed = 0;
+        var now = DateTime.UtcNow;
+        foreach (var (number, value) in updates)
+        {
+            var validExperience = value.Level == 25
+                ? value.Experience == 0 && value.ExperienceRequired == 0
+                : value.Experience is >= 0 and <= 999999
+                    && value.ExperienceRequired is >= 1 and <= 999999
+                    && value.Experience < value.ExperienceRequired;
+            if (number is < 1 or > 50 || value.Level is < 1 or > 25 || !validExperience)
+            {
+                continue;
+            }
+
+            if (progress.BeastProgress.TryGetValue(number, out var current)
+                && current.Level == value.Level
+                && current.Experience == value.Experience
+                && current.ExperienceRequired == value.ExperienceRequired)
+            {
+                continue;
+            }
+
+            progress.BeastProgress[number] = new BeastmasterBeastProgress
+            {
+                Level = value.Level,
+                Experience = value.Experience,
+                ExperienceRequired = value.ExperienceRequired,
+                UpdatedUtc = now,
+            };
+            changed++;
+        }
+
+        if (changed > 0)
+        {
+            configuration.Save();
+        }
+
+        return changed;
+    }
+
     public int GetCompletedCount(BeastmasterStage stage)
         => stage.Objectives.Count(objective => IsCompleted(objective.Key));
 }

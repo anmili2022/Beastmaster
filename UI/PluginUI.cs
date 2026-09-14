@@ -12,6 +12,7 @@ public sealed class PluginUI
     [
         ("quests", "驯兽师任务链"),
         ("catalog", "魔兽图鉴"),
+        ("party", "奇盘编队"),
         ("equipment", "推荐装备"),
         ("combinations", "推荐组合"),
         ("sequences", "技能序列"),
@@ -56,6 +57,7 @@ public sealed class PluginUI
     private readonly BeastmasterCatalogSyncService catalogSyncService;
     private readonly BeastmasterSequenceService sequenceService;
     private readonly BeastmasterRuleService ruleService;
+    private readonly BeastmasterPetPartyService petPartyService;
     private string debugQuery = "驯兽";
     private string debugActionId = "44890";
     private string debugResult = "点击按钮读取客户端资料。";
@@ -74,6 +76,7 @@ public sealed class PluginUI
     private bool isMainWindowOpen;
     private int newRuleTerritoryId;
     private string ruleImportStatus = string.Empty;
+    private string partyPresetStatus = string.Empty;
 
     public PluginUI(
         BeastmasterConfiguration configuration,
@@ -84,7 +87,8 @@ public sealed class PluginUI
         BeastmasterAutoCaptureService autoCaptureService,
         BeastmasterCatalogSyncService catalogSyncService,
         BeastmasterSequenceService sequenceService,
-        BeastmasterRuleService ruleService)
+        BeastmasterRuleService ruleService,
+        BeastmasterPetPartyService petPartyService)
     {
         this.configuration = configuration;
         this.progressService = progressService;
@@ -95,6 +99,7 @@ public sealed class PluginUI
         this.catalogSyncService = catalogSyncService;
         this.sequenceService = sequenceService;
         this.ruleService = ruleService;
+        this.petPartyService = petPartyService;
     }
 
     public void OpenMainWindow()
@@ -106,6 +111,7 @@ public sealed class PluginUI
     {
         RefreshGaugeSnapshot();
         DrawAutoCaptureOverlay();
+        DrawPetPartyOverlay();
         if (!isMainWindowOpen)
         {
             return;
@@ -229,6 +235,62 @@ public sealed class PluginUI
         }
 
         ImGui.End();
+    }
+
+    private void DrawPetPartyOverlay()
+    {
+        var snapshot = petPartyService.Snapshot;
+        if (!snapshot.Available)
+        {
+            return;
+        }
+
+        var presets = configuration.PartyPresets;
+        if (presets.Count == 0)
+        {
+            return;
+        }
+
+        var selected = presets[Math.Clamp(configuration.SelectedPartyPresetIndex, 0, presets.Count - 1)];
+        ImGui.SetNextWindowPos(new Vector2(280f, 180f), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowBgAlpha(0.92f);
+        if (!ImGui.Begin("##BeastmasterPartyOverlay",
+                ImGuiWindowFlags.NoTitleBar
+                | ImGuiWindowFlags.AlwaysAutoResize
+                | ImGuiWindowFlags.NoScrollbar
+                | ImGuiWindowFlags.NoScrollWithMouse
+                | ImGuiWindowFlags.NoFocusOnAppearing
+                | ImGuiWindowFlags.NoNav))
+        {
+            ImGui.End();
+            return;
+        }
+
+        ImGui.Text("奇盘编队");
+        ImGui.TextDisabled($"当前编队 · {snapshot.MemberCount}/{snapshot.Capacity}");
+        ImGui.TextUnformatted(selected.Name);
+        ImGui.SameLine();
+        ImGui.BeginDisabled(petPartyService.IsApplying || !CanApplyPartyPreset(selected));
+        PushPartyApplyButtonStyle();
+        if (ImGui.Button(petPartyService.IsApplying ? "应用中..." : "应用编队"))
+        {
+            petPartyService.TryApply(selected);
+        }
+        ImGui.PopStyleColor(3);
+        ImGui.EndDisabled();
+        if (!string.IsNullOrWhiteSpace(petPartyService.ApplyStatus))
+        {
+            ImGui.TextWrapped(petPartyService.ApplyStatus);
+        }
+
+        ImGui.End();
+    }
+
+    private static void PushPartyApplyButtonStyle()
+    {
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.67f, 0.52f, 0.27f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.78f, 0.63f, 0.36f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.58f, 0.43f, 0.21f, 1f));
     }
 
     private void DrawAutoOutputHeader()
@@ -509,10 +571,11 @@ public sealed class PluginUI
         DrawSidebarButton(MainSections[5]);
         DrawSidebarButton(MainSections[6]);
         DrawSidebarButton(MainSections[7]);
+        DrawSidebarButton(MainSections[8]);
 
         ImGui.Separator();
         DrawSidebarLabel("工具");
-        DrawSidebarButton(MainSections[8]);
+        DrawSidebarButton(MainSections[9]);
 
         if (ImGui.Button("反馈与建议", new Vector2(ImGui.GetContentRegionAvail().X, 30f)))
         {
@@ -523,16 +586,33 @@ public sealed class PluginUI
             });
         }
 
-        DrawSidebarButton(MainSections[9]);
         DrawSidebarButton(MainSections[10]);
+        DrawSidebarButton(MainSections[11]);
     }
 
     private void DrawSidebarButton((string Key, string Label) section)
     {
         var selected = configuration.SelectedMainSection == section.Key;
+        var hasSectionColor = section.Key is "catalog" or "party";
+        if (hasSectionColor)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, section.Key == "catalog"
+                ? new Vector4(0.42f, 0.30f, 0.10f, 1f)
+                : new Vector4(0.42f, 0.22f, 0.14f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, section.Key == "catalog"
+                ? new Vector4(0.58f, 0.42f, 0.14f, 1f)
+                : new Vector4(0.58f, 0.30f, 0.20f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, section.Key == "catalog"
+                ? new Vector4(0.65f, 0.48f, 0.18f, 1f)
+                : new Vector4(0.66f, 0.35f, 0.24f, 1f));
+        }
         if (selected)
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.12f, 0.23f, 0.25f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.Button, section.Key == "catalog"
+                ? new Vector4(0.62f, 0.44f, 0.12f, 1f)
+                : section.Key == "party"
+                    ? new Vector4(0.64f, 0.32f, 0.20f, 1f)
+                    : new Vector4(0.12f, 0.23f, 0.25f, 1f));
         }
 
         if (ImGui.Button($"{section.Label}##section-{section.Key}", new Vector2(ImGui.GetContentRegionAvail().X, 34f)))
@@ -553,6 +633,10 @@ public sealed class PluginUI
         if (selected)
         {
             ImGui.PopStyleColor();
+        }
+        if (hasSectionColor)
+        {
+            ImGui.PopStyleColor(3);
         }
     }
 
@@ -584,6 +668,9 @@ public sealed class PluginUI
                 break;
             case "catalog":
                 DrawCatalog();
+                break;
+            case "party":
+                DrawPartyPresets();
                 break;
             case "equipment":
                 DrawEquipment();
@@ -1604,6 +1691,7 @@ public sealed class PluginUI
         }
 
         ImGui.TextDisabled("捕获成功时自动记录，也可按当前角色手动修改完成状态。");
+        DrawCatalogProgressDescription();
         if (ImGui.Button("同步当前角色已解锁魔兽"))
         {
             catalogSyncService.RequestSync();
@@ -1633,10 +1721,29 @@ public sealed class PluginUI
         }
         ImGui.SameLine();
         var sortByLevel = configuration.SortCatalogByLevel;
-        if (ImGui.Checkbox("按等级排序", ref sortByLevel))
+        if (ImGui.Checkbox("按捕获等级排序", ref sortByLevel))
         {
             configuration.SortCatalogByLevel = sortByLevel;
+            if (sortByLevel) configuration.SortCatalogByBeastLevel = false;
             configuration.Save();
+        }
+        ImGui.SameLine();
+        var sortByBeastLevel = configuration.SortCatalogByBeastLevel;
+        if (ImGui.Checkbox("按兽级排序", ref sortByBeastLevel))
+        {
+            configuration.SortCatalogByBeastLevel = sortByBeastLevel;
+            if (sortByBeastLevel) configuration.SortCatalogByLevel = false;
+            configuration.Save();
+        }
+        if (configuration.SortCatalogByBeastLevel)
+        {
+            ImGui.SameLine();
+            var descending = configuration.SortCatalogByBeastLevelDescending;
+            if (ImGui.Checkbox("兽级逆序", ref descending))
+            {
+                configuration.SortCatalogByBeastLevelDescending = descending;
+                configuration.Save();
+            }
         }
         ImGui.SameLine();
         if (ImGui.Checkbox("隐藏已捕获魔兽", ref hideCaptured))
@@ -1664,7 +1771,7 @@ public sealed class PluginUI
 
         if (!ImGui.BeginTable(
                 "BeastmasterCatalogTable",
-                8,
+                10,
                 ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.ScrollY | ImGuiTableFlags.SizingStretchProp,
                 new Vector2(0f, 0f)))
         {
@@ -1675,7 +1782,9 @@ public sealed class PluginUI
         ImGui.TableSetupColumn("编号 / 魔兽", ImGuiTableColumnFlags.WidthFixed, 150f);
         ImGui.TableSetupColumn("属性", ImGuiTableColumnFlags.WidthFixed, 48f);
         ImGui.TableSetupColumn("技能", ImGuiTableColumnFlags.WidthFixed, 118f);
-        ImGui.TableSetupColumn("等级", ImGuiTableColumnFlags.WidthFixed, 50f);
+        ImGui.TableSetupColumn("捕获等级", ImGuiTableColumnFlags.WidthFixed, 66f);
+        ImGui.TableSetupColumn("兽级", ImGuiTableColumnFlags.WidthFixed, 42f);
+        ImGui.TableSetupColumn("经验", ImGuiTableColumnFlags.WidthFixed, 62f);
         ImGui.TableSetupColumn("区域 / 副本", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableSetupColumn("坐标", ImGuiTableColumnFlags.WidthFixed, 112f);
         ImGui.TableSetupColumn("导航", ImGuiTableColumnFlags.WidthFixed, 62f);
@@ -1685,12 +1794,15 @@ public sealed class PluginUI
         IEnumerable<BeastmasterCatalogEntry> sortedEntries;
         if (configuration.SortCatalogByLocation)
         {
-            sortedEntries = displayedEntries
+            var ordered = displayedEntries
                 .OrderBy(entry => !(entry.TerritoryType == currentTerritory
                     && (entry.MapRowId == 0 || entry.MapRowId == currentMapRowId)))
-                .ThenBy(entry => entry.Location, StringComparer.Ordinal)
-                .ThenBy(entry => configuration.SortCatalogByLevel ? GetCatalogMinimumLevel(entry.Level) : int.MaxValue)
-                .ThenBy(entry => entry.Number);
+                .ThenBy(entry => entry.Location, StringComparer.Ordinal);
+            sortedEntries = ApplyCatalogLevelSort(ordered);
+        }
+        else if (configuration.SortCatalogByBeastLevel)
+        {
+            sortedEntries = ApplyCatalogBeastLevelSort(displayedEntries);
         }
         else if (configuration.SortCatalogByLevel)
         {
@@ -1738,6 +1850,19 @@ public sealed class PluginUI
             ImGui.TableNextColumn();
             ImGui.TextUnformatted(entry.Level);
             ImGui.TableNextColumn();
+            var beastProgress = progressService.GetBeastProgress(entry.Number);
+            ImGui.TextUnformatted(beastProgress?.Level.ToString() ?? "--");
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(beastProgress == null
+                ? "--/--"
+                : beastProgress.Level >= 25
+                    ? "--/--"
+                    : $"{beastProgress.Experience}/{beastProgress.ExperienceRequired}");
+            if (beastProgress != null && ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip($"最近同步：{beastProgress.UpdatedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
+            }
+            ImGui.TableNextColumn();
             ImGui.TextUnformatted(entry.Location);
             ImGui.TableNextColumn();
             ImGui.TextUnformatted(GetCatalogCoordinate(entry));
@@ -1760,6 +1885,329 @@ public sealed class PluginUI
 
         ImGui.EndTable();
     }
+
+    private IEnumerable<BeastmasterCatalogEntry> ApplyCatalogLevelSort(IOrderedEnumerable<BeastmasterCatalogEntry> ordered)
+    {
+        if (configuration.SortCatalogByBeastLevel)
+        {
+            var withKnownFirst = ordered.ThenBy(entry => progressService.GetBeastProgress(entry.Number) == null);
+            return configuration.SortCatalogByBeastLevelDescending
+                ? withKnownFirst.ThenByDescending(entry => progressService.GetBeastProgress(entry.Number)?.Level ?? 0)
+                    .ThenBy(entry => entry.Number)
+                : withKnownFirst.ThenBy(entry => progressService.GetBeastProgress(entry.Number)?.Level ?? int.MaxValue)
+                    .ThenBy(entry => entry.Number);
+        }
+
+        return configuration.SortCatalogByLevel
+            ? ordered.ThenBy(entry => GetCatalogMinimumLevel(entry.Level)).ThenBy(entry => entry.Number)
+            : ordered.ThenBy(entry => entry.Number);
+    }
+
+    private IEnumerable<BeastmasterCatalogEntry> ApplyCatalogBeastLevelSort(IEnumerable<BeastmasterCatalogEntry> entries)
+    {
+        var knownFirst = entries.OrderBy(entry => progressService.GetBeastProgress(entry.Number) == null);
+        return configuration.SortCatalogByBeastLevelDescending
+            ? knownFirst.ThenByDescending(entry => progressService.GetBeastProgress(entry.Number)?.Level ?? 0)
+                .ThenBy(entry => entry.Number)
+            : knownFirst.ThenBy(entry => progressService.GetBeastProgress(entry.Number)?.Level ?? int.MaxValue)
+                .ThenBy(entry => entry.Number);
+    }
+
+    private void DrawPartyPresets()
+    {
+        ImGui.Text("奇盘编队");
+        ImGui.TextColored(new Vector4(1f, 0.3f, 0.25f, 1f),
+            "预设栏位可选 10/12/14/15；应用时按当前游戏编队栏位数量截断或保留空余。");
+        ImGui.Separator();
+
+        var presets = configuration.PartyPresets;
+        if (presets.Count == 0)
+        {
+            presets.Add(new BeastmasterPartyPreset());
+            configuration.SelectedPartyPresetIndex = 0;
+            configuration.Save();
+        }
+
+        var selectedIndex = Math.Clamp(configuration.SelectedPartyPresetIndex, 0, presets.Count - 1);
+        if (ImGui.Button("新建"))
+        {
+            presets.Add(new BeastmasterPartyPreset { Name = GetUniquePartyPresetName(presets, "10栏位编队") });
+            configuration.SelectedPartyPresetIndex = presets.Count - 1;
+            partyPresetStatus = "已新建编队预设。";
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("复制"))
+        {
+            var copy = presets[selectedIndex].Clone();
+            copy.Name = GetUniquePartyPresetName(presets, copy.Name);
+            presets.Add(copy);
+            configuration.SelectedPartyPresetIndex = presets.Count - 1;
+            partyPresetStatus = "已复制当前预设。";
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        ImGui.BeginDisabled(presets.Count <= 1);
+        if (ImGui.Button("删除"))
+        {
+            presets.RemoveAt(selectedIndex);
+            configuration.SelectedPartyPresetIndex = Math.Clamp(selectedIndex, 0, presets.Count - 1);
+            partyPresetStatus = "已删除当前预设。";
+            configuration.Save();
+        }
+        ImGui.EndDisabled();
+        ImGui.SameLine(0f, 18f);
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.61f, 0.34f, 0.21f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.73f, 0.44f, 0.28f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.52f, 0.27f, 0.17f, 1f));
+        if (ImGui.Button("分享"))
+        {
+            ImGui.SetClipboardText(presets[selectedIndex].Export());
+            partyPresetStatus = "当前编队预设已复制到剪贴板。";
+        }
+        ImGui.PopStyleColor(3);
+        ImGui.SameLine();
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.55f, 0.31f, 0.34f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.67f, 0.41f, 0.44f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.47f, 0.25f, 0.28f, 1f));
+        if (ImGui.Button("导入"))
+        {
+            if (BeastmasterPartyPreset.TryImport(ImGui.GetClipboardText(), out var imported, out var error)
+                && imported != null)
+            {
+                imported.Name = GetUniquePartyPresetName(presets, imported.Name);
+                presets.Add(imported);
+                configuration.SelectedPartyPresetIndex = presets.Count - 1;
+                partyPresetStatus = "已从剪贴板导入编队预设。";
+                configuration.Save();
+            }
+            else
+            {
+                partyPresetStatus = $"导入失败：{error}";
+            }
+        }
+        ImGui.PopStyleColor(3);
+        ImGui.SameLine(0f, 18f);
+        selectedIndex = Math.Clamp(configuration.SelectedPartyPresetIndex, 0, presets.Count - 1);
+        var selectedPreset = presets[selectedIndex];
+        ImGui.BeginDisabled(!petPartyService.Snapshot.Available || petPartyService.IsApplying || !CanApplyPartyPreset(selectedPreset));
+        PushPartyApplyButtonStyle();
+        if (ImGui.Button(petPartyService.IsApplying ? "应用中..." : "应用编队", new Vector2(110f, 0f)))
+        {
+            petPartyService.TryApply(selectedPreset);
+        }
+        ImGui.PopStyleColor(3);
+        ImGui.EndDisabled();
+
+        var presetNames = string.Join('\0', presets.Select(item => item.Name)) + '\0';
+        selectedIndex = Math.Clamp(configuration.SelectedPartyPresetIndex, 0, presets.Count - 1);
+        ImGui.SetNextItemWidth(300f);
+        if (ImGui.Combo("编队预设", ref selectedIndex, presetNames))
+        {
+            configuration.SelectedPartyPresetIndex = selectedIndex;
+            configuration.Save();
+        }
+
+        selectedIndex = Math.Clamp(configuration.SelectedPartyPresetIndex, 0, presets.Count - 1);
+        var preset = presets[selectedIndex];
+        var name = preset.Name;
+        ImGui.SetNextItemWidth(135f);
+        if (ImGui.InputText("预设名称", ref name, 100) && !string.IsNullOrWhiteSpace(name))
+        {
+            preset.Name = name.Trim();
+            configuration.Save();
+        }
+
+        ImGui.SameLine();
+        var slotCount = preset.SlotCount;
+        var slotIndex = slotCount switch { 12 => 1, 14 => 2, 15 => 3, _ => 0 };
+        ImGui.SetNextItemWidth(100f);
+        if (ImGui.Combo("预设栏位", ref slotIndex, "10 个\0 12 个\0 14 个\0 15 个\0"))
+        {
+            preset.SlotCount = slotIndex switch { 1 => 12, 2 => 14, 3 => 15, _ => 10 };
+            if (preset.Members.Count > preset.SlotCount)
+            {
+                preset.Members.RemoveRange(preset.SlotCount, preset.Members.Count - preset.SlotCount);
+            }
+            configuration.Save();
+        }
+
+        ImGui.Text($"预设成员：{preset.Members.Count}/{preset.SlotCount}");
+        if (petPartyService.Snapshot.Available && preset.SlotCount != petPartyService.Snapshot.Capacity)
+        {
+            var difference = petPartyService.Snapshot.Capacity - preset.SlotCount;
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), difference < 0
+                ? $"当前编队只有 {petPartyService.Snapshot.Capacity} 个栏位，将只应用预设前 {petPartyService.Snapshot.Capacity} 个位置。"
+                : $"当前编队有 {petPartyService.Snapshot.Capacity} 个栏位，应用后将空余 {difference} 个位置。");
+        }
+        var availableBeasts = BeastmasterCatalog.Entries
+            .Where(entry => progressService.IsCompleted(entry.Key))
+            .ToArray();
+        for (var position = 0; position < preset.SlotCount; position++)
+        {
+            var currentNumber = position < preset.Members.Count ? preset.Members[position] : 0;
+            var options = new List<(int Number, string Label)> { (0, "-- 空位 --") };
+            options.AddRange(availableBeasts.Select(entry =>
+            {
+                var progress = progressService.GetBeastProgress(entry.Number);
+                var level = progress == null ? "Lv.--" : $"Lv.{progress.Level}";
+                return (entry.Number, $"{entry.Number:00} - {entry.Name} - {level}");
+            }));
+
+            var optionIndex = options.FindIndex(option => option.Number == currentNumber);
+            if (optionIndex < 0) optionIndex = 0;
+            ImGui.SetNextItemWidth(330f);
+            if (ImGui.Combo($"位置 {position + 1:00}##party-member-{position}", ref optionIndex,
+                    string.Join('\0', options.Select(option => option.Label)) + '\0'))
+            {
+                SetPartyPresetMember(preset, position, options[optionIndex].Number);
+            }
+        }
+
+        if (!preset.TryValidate(out var validationError))
+        {
+            ImGui.TextColored(new Vector4(1f, 0.4f, 0.3f, 1f), validationError);
+        }
+        else
+        {
+            var unavailableMembers = preset.Members
+                .Where(number => !progressService.IsCompleted(BeastmasterCatalog.Entries[number - 1].Key))
+                .ToArray();
+            if (unavailableMembers.Length > 0)
+            {
+                ImGui.TextColored(new Vector4(1f, 0.4f, 0.3f, 1f),
+                    $"未捕获或不可用：{string.Join(", ", unavailableMembers.Select(number => number.ToString("00")))}");
+            }
+        }
+
+        if (petPartyService.Snapshot.Available)
+        {
+            ImGui.Separator();
+            DrawCurrentPetParty(preset);
+        }
+        if (!string.IsNullOrWhiteSpace(partyPresetStatus))
+        {
+            ImGui.TextWrapped(partyPresetStatus);
+        }
+
+    }
+
+    private static void DrawCatalogProgressDescription()
+    {
+        ImGui.TextDisabled("兽级 / 经验刷新说明 (?)");
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("数据按角色保存；未同步的魔兽显示 --。\n刷新兽级和经验不需要打开魔兽编队窗口。");
+        }
+
+        DrawCatalogProgressHelpLine("结算同步：", "每轮结算后自动刷新参战魔兽。");
+        DrawCatalogProgressHelpLineStart("原生图鉴：", "需与 ");
+        DrawCatalogProgressHighlightedText("劳妲", new Vector4(1f, 0.82f, 0.25f, 1f));
+        ImGui.SameLine(0f, 0f);
+        ImGui.TextUnformatted(" 对话打开 ");
+        ImGui.SameLine(0f, 0f);
+        DrawCatalogProgressHighlightedText("原生魔兽图鉴", new Vector4(1f, 0.82f, 0.25f, 1f));
+        ImGui.SameLine(0f, 0f);
+        ImGui.TextUnformatted(" 来同步数据，将鼠标放到对应魔兽上 1 秒即可。");
+        DrawCatalogProgressHelpLine("25级：", "满级经验显示为 --/--，未同步数据显示 --。");
+    }
+
+    private static void DrawCatalogProgressHelpLine(string label, string description)
+    {
+        DrawCatalogProgressHelpLineStart(label, description);
+    }
+
+    private static void DrawCatalogProgressHelpLineStart(string label, string description)
+    {
+        ImGui.TextColored(new Vector4(1f, 0.25f, 0.25f, 1f), label);
+        ImGui.SameLine(0f, 4f);
+        ImGui.TextUnformatted(description);
+    }
+
+    private static void DrawCatalogProgressHighlightedText(string text, Vector4 color)
+    {
+        ImGui.SameLine(0f, 0f);
+        ImGui.TextColored(color, text);
+    }
+
+    private void DrawCurrentPetParty(BeastmasterPartyPreset preset)
+    {
+        var snapshot = petPartyService.Snapshot;
+        ImGui.Text("当前游戏编队");
+        if (!snapshot.Available)
+        {
+            ImGui.TextDisabled(snapshot.Reason);
+            return;
+        }
+
+        ImGui.TextDisabled($"当前编队：{snapshot.MemberCount}/{snapshot.Capacity}");
+        var maximum = Math.Max(snapshot.Members.Count, preset.Members.Count);
+        for (var index = 0; index < maximum; index++)
+        {
+            var current = index < snapshot.Members.Count ? snapshot.Members[index].CatalogNumber : 0;
+            var expected = index < preset.Members.Count ? preset.Members[index] : 0;
+            var currentText = current == 0 ? "空" : $"{current:00} {BeastmasterCatalog.Entries[current - 1].Name}";
+            var expectedText = expected == 0 ? "空" : $"{expected:00} {BeastmasterCatalog.Entries[expected - 1].Name}";
+            var matches = current == expected;
+            ImGui.TextColored(matches
+                    ? new Vector4(0.45f, 0.8f, 0.5f, 1f)
+                    : new Vector4(1f, 0.65f, 0.25f, 1f),
+                $"{index + 1:00}: {currentText} → {expectedText}");
+        }
+
+    }
+
+    private void SetPartyPresetMember(BeastmasterPartyPreset preset, int position, int number)
+    {
+        if (number == 0)
+        {
+            if (position < preset.Members.Count)
+            {
+                preset.Members.RemoveRange(position, preset.Members.Count - position);
+            }
+            partyPresetStatus = "已清空该位置及其后的成员。";
+            configuration.Save();
+            return;
+        }
+
+        if (preset.Members.Contains(number))
+        {
+            partyPresetStatus = $"图鉴 {number:00} 已在当前预设中，不能重复添加。";
+            return;
+        }
+
+        if (position < preset.Members.Count)
+        {
+            preset.Members[position] = number;
+        }
+        else if (position == preset.Members.Count)
+        {
+            preset.Members.Add(number);
+        }
+        else
+        {
+            partyPresetStatus = "请先填写前一个位置，空位只能位于名单末尾。";
+            return;
+        }
+
+        partyPresetStatus = "预设已保存。";
+        configuration.Save();
+    }
+
+    private static string GetUniquePartyPresetName(IEnumerable<BeastmasterPartyPreset> presets, string baseName)
+    {
+        var names = presets.Select(preset => preset.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!names.Contains(baseName)) return baseName;
+        for (var suffix = 2; ; suffix++)
+        {
+            var candidate = $"{baseName} ({suffix})";
+            if (!names.Contains(candidate)) return candidate;
+        }
+    }
+
+    private bool CanApplyPartyPreset(BeastmasterPartyPreset preset)
+        => preset.TryValidate(out _)
+            && preset.Members.All(number => progressService.IsCompleted(BeastmasterCatalog.Entries[number - 1].Key));
 
     private static string GetCatalogCoordinate(BeastmasterCatalogEntry entry)
         => entry.LocationType switch
@@ -2728,7 +3176,7 @@ public sealed class PluginUI
         DrawDebugActionRow(
             "##DebugProjectDataType",
             ref debugProjectDataType,
-            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0魔兽恢复药扫描\0内容道具容器扫描\0XBM界面扫描\0XBM道具结构\0奇弈道具列表\0",
+            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0魔兽恢复药扫描\0内容道具容器扫描\0XBM界面扫描\0XBM道具结构\0奇弈道具列表\0魔兽等级经验结构\0斗兽结算等级经验\0魔兽编队结构\0",
             "读取##DebugProjectData",
             RunDebugProjectData);
 
@@ -2798,6 +3246,9 @@ public sealed class PluginUI
             10 => debugDataService.GetXbmAddonProbe(),
             11 => debugDataService.GetXbmItemStructureProbe(),
             12 => debugDataService.GetCrucibleItemList(),
+            13 => debugDataService.GetBeastLevelExperienceProbe(),
+            14 => debugDataService.GetBeastResultProgressionProbe(),
+            15 => debugDataService.GetPetPartyStructureProbe(),
             _ => "未知项目资料类型。",
         });
     }

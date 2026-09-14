@@ -12,12 +12,14 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private DateTime lastSaveFailureUtc = DateTime.MinValue;
 
-    public int Version { get; set; } = 30;
+    public int Version { get; set; } = 33;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
     public bool SortCatalogByLocation { get; set; }
     public bool SortCatalogByLevel { get; set; }
+    public bool SortCatalogByBeastLevel { get; set; }
+    public bool SortCatalogByBeastLevelDescending { get; set; }
     public bool HideCapturedBeasts { get; set; }
     public bool AutoCompleteCatalogFromChat { get; set; } = true;
     public bool UseFlightNavigation { get; set; } = true;
@@ -67,6 +69,8 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public int SelectedRuleSetIndex { get; set; }
     public int SelectedRuleIndex { get; set; }
     public List<BeastmasterRuleSetDefinition> RuleSets { get; set; } = [];
+    public int SelectedPartyPresetIndex { get; set; }
+    public List<BeastmasterPartyPreset> PartyPresets { get; set; } = [];
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
         = new(StringComparer.Ordinal);
 
@@ -74,8 +78,14 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     {
         this.pluginInterface = pluginInterface;
         ProgressByCharacter ??= new Dictionary<string, BeastmasterCharacterProgress>(StringComparer.Ordinal);
+        foreach (var progress in ProgressByCharacter.Values)
+        {
+            progress.CompletedObjectives ??= new HashSet<string>(StringComparer.Ordinal);
+            progress.BeastProgress ??= [];
+        }
         Sequences ??= [];
         RuleSets ??= [];
+        PartyPresets ??= [];
         if (Sequences.Count == 0)
         {
             Sequences.Add(BeastmasterSequenceDefinition.CreateWaterOpener());
@@ -321,6 +331,38 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             Version = 30;
             Save();
         }
+
+        if (Version < 31)
+        {
+            foreach (var progress in ProgressByCharacter.Values)
+            {
+                progress.BeastProgress ??= [];
+            }
+            Version = 31;
+            Save();
+        }
+
+        if (Version < 32)
+        {
+            PartyPresets ??= [];
+            Version = 32;
+            Save();
+        }
+
+        if (Version < 33)
+        {
+            SortCatalogByBeastLevel = false;
+            SortCatalogByBeastLevelDescending = false;
+            Version = 33;
+            Save();
+        }
+
+        if (PartyPresets.Count == 0)
+        {
+            PartyPresets.Add(new BeastmasterPartyPreset());
+            Save();
+        }
+        SelectedPartyPresetIndex = Math.Clamp(SelectedPartyPresetIndex, 0, PartyPresets.Count - 1);
 
         if (RuleSets.Count == 0)
         {

@@ -19,6 +19,8 @@ internal sealed class DalamudApi
     [PluginService] public static IGameInventory GameInventory { get; private set; } = null!;
     [PluginService] public static IDataManager DataManager { get; private set; } = null!;
     [PluginService] public static IFramework Framework { get; private set; } = null!;
+    [PluginService] public static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
+    [PluginService] public static IAgentLifecycle AgentLifecycle { get; private set; } = null!;
     [PluginService] public static ICondition Condition { get; private set; } = null!;
     [PluginService] public static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] public static ICommandManager Commands { get; private set; } = null!;

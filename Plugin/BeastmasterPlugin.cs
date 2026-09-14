@@ -12,6 +12,9 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
     private readonly BeastmasterCatalogChatTracker catalogChatTracker;
     private readonly BeastmasterAutoCaptureService autoCaptureService;
     private readonly BeastmasterCatalogSyncService catalogSyncService;
+    private readonly BeastmasterResultProgressService resultProgressService;
+    private readonly BeastmasterNotebookProgressService notebookProgressService;
+    private readonly BeastmasterPetPartyService petPartyService;
     private readonly BeastmasterCountdownService countdownService;
     private readonly BeastmasterSequenceService sequenceService;
     private readonly BeastmasterRuleService ruleService;
@@ -28,6 +31,12 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
             ?? new BeastmasterConfiguration();
         Configuration.Initialize(pluginInterface);
         var progressService = new BeastmasterProgressService(Configuration);
+        petPartyService = new BeastmasterPetPartyService();
+        petPartyService.Start();
+        notebookProgressService = new BeastmasterNotebookProgressService(progressService);
+        notebookProgressService.Start();
+        resultProgressService = new BeastmasterResultProgressService(progressService);
+        resultProgressService.Start();
         catalogSyncService = new BeastmasterCatalogSyncService(progressService);
         catalogSyncService.Start();
         var questService = new BeastmasterQuestService();
@@ -39,7 +48,7 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         navigationService = new BeastmasterNavigationService(pluginInterface, Configuration);
         catalogChatTracker = new BeastmasterCatalogChatTracker(Configuration, progressService);
         autoCaptureService = new BeastmasterAutoCaptureService(Configuration, sequenceService, ruleService);
-        ui = new PluginUI(Configuration, progressService, questService, navigationService, debugDataService, autoCaptureService, catalogSyncService, sequenceService, ruleService);
+        ui = new PluginUI(Configuration, progressService, questService, navigationService, debugDataService, autoCaptureService, catalogSyncService, sequenceService, ruleService, petPartyService);
 
         DalamudApi.Commands.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -68,6 +77,9 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         autoCaptureService.Dispose();
         countdownService.Dispose();
         catalogSyncService.Dispose();
+        resultProgressService.Dispose();
+        notebookProgressService.Dispose();
+        petPartyService.Dispose();
         navigationService.Dispose();
         Configuration.Save();
     }

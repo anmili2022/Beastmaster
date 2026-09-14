@@ -27,4 +27,14 @@ public sealed record BeastmasterStage(
 public sealed class BeastmasterCharacterProgress
 {
     public HashSet<string> CompletedObjectives { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<int, BeastmasterBeastProgress> BeastProgress { get; set; } = [];
+}
+
+[Serializable]
+public sealed class BeastmasterBeastProgress
+{
+    public int Level { get; set; }
+    public int Experience { get; set; }
+    public int ExperienceRequired { get; set; } = 100;
+    public DateTime UpdatedUtc { get; set; }
 }
