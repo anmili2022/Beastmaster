@@ -110,6 +110,7 @@ public sealed unsafe class BeastmasterCatalogSyncService
 
                 var changed = progressService.ReplaceCatalogProgress(unlocked);
                 Stop($"同步完成：已解锁 {unlocked.Count}/{BeastmasterCatalog.Entries.Count}，更新 {changed} 项。", clearStates: false);
+                DalamudApi.ChatGui.Print($"[驯兽师助手] 同步已解锁魔兽完成：已解锁 {unlocked.Count}/{BeastmasterCatalog.Entries.Count}，更新 {changed} 项。");
                 return;
             }
 
@@ -175,6 +176,7 @@ public sealed unsafe class BeastmasterCatalogSyncService
         {
             Diagnostic = ex.Message;
             Stop($"同步失败，未修改进度：{ex.Message}", clearStates: true);
+            DalamudApi.ChatGui.Print($"[驯兽师助手] 同步已解锁魔兽失败：{ex.Message}");
         }
     }
 

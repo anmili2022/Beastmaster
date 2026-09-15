@@ -12,7 +12,7 @@ public sealed class PluginUI
     [
         ("quests", "驯兽师任务链"),
         ("catalog", "魔兽图鉴"),
-        ("party", "奇盘编队"),
+        ("party", "斗兽奇弈"),
         ("equipment", "推荐装备"),
         ("combinations", "推荐组合"),
         ("sequences", "技能序列"),
@@ -55,6 +55,8 @@ public sealed class PluginUI
     private readonly BeastmasterDebugDataService debugDataService;
     private readonly BeastmasterAutoCaptureService autoCaptureService;
     private readonly BeastmasterCatalogSyncService catalogSyncService;
+    private readonly BeastmasterAchievementSyncService achievementSyncService;
+    private readonly BeastmasterNotebookSyncService notebookSyncService;
     private readonly BeastmasterSequenceService sequenceService;
     private readonly BeastmasterRuleService ruleService;
     private readonly BeastmasterPetPartyService petPartyService;
@@ -77,6 +79,7 @@ public sealed class PluginUI
     private int newRuleTerritoryId;
     private string ruleImportStatus = string.Empty;
     private string partyPresetStatus = string.Empty;
+    private bool arenaTabSelectionInitialized;
 
     public PluginUI(
         BeastmasterConfiguration configuration,
@@ -86,6 +89,8 @@ public sealed class PluginUI
         BeastmasterDebugDataService debugDataService,
         BeastmasterAutoCaptureService autoCaptureService,
         BeastmasterCatalogSyncService catalogSyncService,
+        BeastmasterAchievementSyncService achievementSyncService,
+        BeastmasterNotebookSyncService notebookSyncService,
         BeastmasterSequenceService sequenceService,
         BeastmasterRuleService ruleService,
         BeastmasterPetPartyService petPartyService)
@@ -97,6 +102,8 @@ public sealed class PluginUI
         this.debugDataService = debugDataService;
         this.autoCaptureService = autoCaptureService;
         this.catalogSyncService = catalogSyncService;
+        this.achievementSyncService = achievementSyncService;
+        this.notebookSyncService = notebookSyncService;
         this.sequenceService = sequenceService;
         this.ruleService = ruleService;
         this.petPartyService = petPartyService;
@@ -251,7 +258,8 @@ public sealed class PluginUI
             return;
         }
 
-        var selected = presets[Math.Clamp(configuration.SelectedPartyPresetIndex, 0, presets.Count - 1)];
+        var selectedIndex = Math.Clamp(configuration.SelectedPartyPresetIndex, 0, presets.Count - 1);
+        var selected = presets[selectedIndex];
         ImGui.SetNextWindowPos(new Vector2(280f, 180f), ImGuiCond.FirstUseEver);
         ImGui.SetNextWindowBgAlpha(0.92f);
         if (!ImGui.Begin("##BeastmasterPartyOverlay",
@@ -268,11 +276,18 @@ public sealed class PluginUI
 
         ImGui.Text("奇盘编队");
         ImGui.TextDisabled($"当前编队 · {snapshot.MemberCount}/{snapshot.Capacity}");
-        ImGui.TextUnformatted(selected.Name);
+        var presetNames = string.Join('\0', presets.Select(preset => preset.Name)) + '\0';
+        ImGui.SetNextItemWidth(180f);
+        if (ImGui.Combo("##party-overlay-preset", ref selectedIndex, presetNames))
+        {
+            configuration.SelectedPartyPresetIndex = selectedIndex;
+            configuration.Save();
+            selected = presets[selectedIndex];
+        }
         ImGui.SameLine();
         ImGui.BeginDisabled(petPartyService.IsApplying || !CanApplyPartyPreset(selected));
         PushPartyApplyButtonStyle();
-        if (ImGui.Button(petPartyService.IsApplying ? "应用中..." : "应用编队"))
+        if (ImGui.Button(petPartyService.IsApplying ? "应用中..." : "应用"))
         {
             petPartyService.TryApply(selected);
         }
@@ -670,7 +685,7 @@ public sealed class PluginUI
                 DrawCatalog();
                 break;
             case "party":
-                DrawPartyPresets();
+                DrawBeastArena();
                 break;
             case "equipment":
                 DrawEquipment();
@@ -1690,27 +1705,65 @@ public sealed class PluginUI
             navigationService.Stop();
         }
 
-        ImGui.TextDisabled("捕获成功时自动记录，也可按当前角色手动修改完成状态。");
-        DrawCatalogProgressDescription();
-        if (ImGui.Button("同步当前角色已解锁魔兽"))
+        ImGui.TextDisabled("同步说明 (?)");
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("捕获成功时自动记录，也可按当前角色手动修改完成状态。\n结算同步：每轮结算后自动刷新参战魔兽。\n原生图鉴：与劳妲对话打开原生魔兽图鉴后点「同步兽级经验」自动遍历全部魔兽。\n25级：满级经验显示为 --/--，未同步数据显示 --。");
+        }
+
+        var entries = BeastmasterCatalog.Entries;
+        var catalogCompletedCount = entries.Count(entry => progressService.IsCompleted(entry.Key));
+
+        if (ImGui.Button("同步已解锁魔兽"))
         {
             catalogSyncService.RequestSync();
         }
-
+        ImGui.SameLine();
+        ImGui.TextDisabled($"{catalogCompletedCount}/{entries.Count}");
+        if (catalogSyncService.IsScanning || !string.IsNullOrWhiteSpace(catalogSyncService.Diagnostic))
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled(catalogSyncService.Status);
+        }
         if (!string.IsNullOrWhiteSpace(catalogSyncService.Diagnostic))
         {
             ImGui.SameLine();
-            if (ImGui.Button("复制同步诊断"))
+            if (ImGui.Button("复制图鉴诊断"))
             {
                 ImGui.SetClipboardText(catalogSyncService.Diagnostic);
             }
         }
 
         ImGui.SameLine();
-        ImGui.TextDisabled(catalogSyncService.Status);
+        if (ImGui.Button("同步兽级经验"))
+        {
+            notebookSyncService.RequestSync();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("先找劳妲对话打开原生魔兽图鉴，再点击同步。");
+        }
+        if (notebookSyncService.IsScanning)
+        {
+            ImGui.SameLine();
+            ImGui.ProgressBar(
+                (float)notebookSyncService.ProgressCount / notebookSyncService.TotalCount,
+                new Vector2(120f, 0f),
+                $"{notebookSyncService.ProgressCount}/{notebookSyncService.TotalCount}");
+        }
+        if (!string.IsNullOrWhiteSpace(notebookSyncService.Diagnostic))
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled(notebookSyncService.Status);
+            ImGui.SameLine();
+            if (ImGui.Button("复制等级诊断"))
+            {
+                ImGui.SetClipboardText(notebookSyncService.Diagnostic);
+            }
+        }
+
         ImGui.Separator();
 
-        var entries = BeastmasterCatalog.Entries;
         var sortByLocation = configuration.SortCatalogByLocation;
         var hideCaptured = configuration.HideCapturedBeasts;
         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.82f, 0.25f, 1f));
@@ -1764,8 +1817,6 @@ public sealed class PluginUI
             .TryGetRow(currentTerritory, out var currentTerritoryRow)
             ? currentTerritoryRow.Map.RowId
             : (ushort)0;
-        var completedCount = entries.Count(entry => progressService.IsCompleted(entry.Key));
-        ImGui.ProgressBar((float)completedCount / entries.Count, new Vector2(-1f, 0f), $"{completedCount}/{entries.Count}");
 
         ImGui.Spacing();
 
@@ -1913,9 +1964,247 @@ public sealed class PluginUI
                 .ThenBy(entry => entry.Number);
     }
 
+    private void DrawBeastArena()
+    {
+        ImGui.Text("斗兽奇弈");
+        ImGui.Separator();
+        if (!ImGui.BeginTabBar("BeastArenaTabs"))
+        {
+            return;
+        }
+
+        DrawBeastArenaTab("party", "奇盘编队", DrawPartyPresets);
+        DrawBeastArenaTab("achievements", "斗兽成就", DrawBeastArenaAchievements);
+        DrawBeastArenaTab("guide", "斗兽攻略", DrawBeastArenaGuide);
+        ImGui.EndTabBar();
+        arenaTabSelectionInitialized = true;
+    }
+
+    private void DrawBeastArenaTab(string key, string label, System.Action draw)
+    {
+        var flags = !arenaTabSelectionInitialized && configuration.SelectedArenaTab == key
+            ? ImGuiTabItemFlags.SetSelected
+            : ImGuiTabItemFlags.None;
+        if (!ImGui.BeginTabItem(label, flags))
+        {
+            return;
+        }
+
+        if (configuration.SelectedArenaTab != key)
+        {
+            configuration.SelectedArenaTab = key;
+            configuration.Save();
+        }
+
+        draw();
+        ImGui.EndTabItem();
+    }
+
+    private void DrawBeastArenaAchievements()
+    {
+        ImGui.Spacing();
+        ImGui.Text("斗兽成就");
+        ImGui.SameLine();
+        ImGui.TextDisabled("按角色保存，点击同步读取当前角色完成情况。");
+        ImGui.Spacing();
+
+        if (ImGui.Button("同步当前角色成就"))
+        {
+            achievementSyncService.RequestSync();
+        }
+
+        if (!string.IsNullOrWhiteSpace(achievementSyncService.Diagnostic))
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("复制同步诊断"))
+            {
+                ImGui.SetClipboardText(achievementSyncService.Diagnostic);
+            }
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled(achievementSyncService.Status);
+        ImGui.Separator();
+
+        var achievementSheet = DalamudApi.DataManager.GetExcelSheet<Achievement>();
+        var total = BeastmasterAchievementCatalog.AchievementCount;
+        var completedCount = 0;
+        foreach (var group in BeastmasterAchievementCatalog.Groups)
+        {
+            foreach (var achievementId in group.AchievementIds)
+            {
+                if (progressService.IsAchievementCompleted(achievementId))
+                {
+                    completedCount++;
+                }
+            }
+        }
+
+        ImGui.ProgressBar((float)completedCount / total, new Vector2(-1f, 0f), $"{completedCount}/{total}");
+        ImGui.Spacing();
+
+        foreach (var group in BeastmasterAchievementCatalog.Groups)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.82f, 0.25f, 1f), group.Name);
+            ImGui.Separator();
+
+            foreach (var achievementId in group.AchievementIds)
+            {
+                if (!achievementSheet.TryGetRow((uint)achievementId, out var achievement))
+                {
+                    ImGui.TextDisabled($"#{achievementId} 未找到成就资料");
+                    continue;
+                }
+
+                var name = achievement.Name.ExtractText();
+                var description = achievement.Description.ExtractText();
+                var points = achievement.Points;
+                var titleText = achievement.Title.Value.Masculine.ExtractText();
+                if (string.IsNullOrWhiteSpace(titleText))
+                {
+                    titleText = achievement.Title.Value.Feminine.ExtractText();
+                }
+
+                var isCompleted = progressService.IsAchievementCompleted(achievementId);
+                var stateColor = isCompleted
+                    ? new Vector4(0.35f, 0.8f, 0.48f, 1f)
+                    : new Vector4(0.62f, 0.62f, 0.62f, 1f);
+
+                ImGui.TextColored(stateColor, $"{achievementId} {name}");
+                ImGui.SameLine();
+                ImGui.TextDisabled($"[{points}]");
+                ImGui.SameLine();
+                ImGui.TextColored(stateColor, isCompleted ? "[已完成]" : "[未完成]");
+
+                if (!string.IsNullOrWhiteSpace(description))
+                {
+                    ImGui.TextDisabled($"  {description}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(titleText))
+                {
+                    ImGui.TextDisabled($"  称号：{titleText}");
+                }
+            }
+
+            ImGui.Spacing();
+        }
+    }
+
+    private static void DrawBeastArenaGuide()
+    {
+        ImGui.Spacing();
+        ImGui.Text("斗兽攻略");
+        ImGui.Separator();
+
+        if (!ImGui.BeginTabBar("BeastArenaGuideTabs"))
+        {
+            return;
+        }
+
+        DrawGuideFloor("第一盘", null);
+        DrawGuideFloor("第二盘", null);
+        DrawGuideFloor("第三盘", BeastmasterArenaGuide.Round3);
+        DrawGuideFloor("高段第一盘", null);
+        DrawGuideFloor("高段第二盘", null);
+
+        ImGui.EndTabBar();
+    }
+
+    private static void DrawGuideFloor(string label, IReadOnlyList<BeastmasterArenaGuideRound>? rounds)
+    {
+        if (!ImGui.BeginTabItem(label))
+        {
+            return;
+        }
+
+        if (rounds == null || rounds.Count == 0)
+        {
+            ImGui.TextDisabled("该层攻略资料待补充。");
+        }
+        else
+        {
+            ImGui.TextDisabled("黄色为 BOSS，灰色为小怪，红色为重点技能。");
+            ImGui.Spacing();
+            foreach (var round in rounds)
+            {
+                ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), round.Position);
+
+                var bosses = string.Join("、", round.Monsters.Where(monster => monster.IsBoss).Select(monster => monster.Name));
+                if (bosses.Length > 0)
+                {
+                    DrawWrappedColoredText($"BOSS：{bosses}", new Vector4(1f, 0.82f, 0.25f, 1f));
+                }
+
+                var minions = string.Join("、", round.Monsters.Where(monster => !monster.IsBoss).Select(monster => monster.Name));
+                if (minions.Length > 0)
+                {
+                    DrawWrappedColoredText($"小怪：{minions}", new Vector4(0.58f, 0.62f, 0.7f, 1f));
+                }
+
+                var highlights = ExtractGuideHighlights(round.Mechanic);
+                if (highlights.Count > 0)
+                {
+                    DrawWrappedColoredText($"重点：{string.Join("、", highlights)}", new Vector4(1f, 0.45f, 0.4f, 1f));
+                }
+
+                if (!string.IsNullOrWhiteSpace(round.Mechanic))
+                {
+                    ImGui.TextWrapped($"机制：{round.Mechanic}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(round.Comment))
+                {
+                    DrawWrappedColoredText($"偷偷说：{round.Comment}", new Vector4(0.58f, 0.62f, 0.7f, 1f));
+                }
+
+                ImGui.Separator();
+                ImGui.Spacing();
+            }
+        }
+
+        ImGui.EndTabItem();
+    }
+
+    private static void DrawWrappedColoredText(string text, Vector4 color)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
+        ImGui.TextWrapped(text);
+        ImGui.PopStyleColor();
+    }
+
+    private static IReadOnlyList<string> ExtractGuideHighlights(string text)
+    {
+        var highlights = new List<string>();
+        var searchIndex = 0;
+        while (searchIndex < text.Length)
+        {
+            var start = text.IndexOf('「', searchIndex);
+            if (start < 0)
+            {
+                break;
+            }
+
+            var end = text.IndexOf('」', start + 1);
+            if (end < 0)
+            {
+                break;
+            }
+
+            if (end > start + 1)
+            {
+                highlights.Add(text[(start + 1)..end]);
+            }
+
+            searchIndex = end + 1;
+        }
+
+        return highlights;
+    }
+
     private void DrawPartyPresets()
     {
-        ImGui.Text("奇盘编队");
+        ImGui.Spacing();
         ImGui.TextColored(new Vector4(1f, 0.3f, 0.25f, 1f),
             "预设栏位可选 10/12/14/15；应用时按当前游戏编队栏位数量截断或保留空余。");
         ImGui.Separator();
@@ -2090,44 +2379,6 @@ public sealed class PluginUI
             ImGui.TextWrapped(partyPresetStatus);
         }
 
-    }
-
-    private static void DrawCatalogProgressDescription()
-    {
-        ImGui.TextDisabled("兽级 / 经验刷新说明 (?)");
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip("数据按角色保存；未同步的魔兽显示 --。\n刷新兽级和经验不需要打开魔兽编队窗口。");
-        }
-
-        DrawCatalogProgressHelpLine("结算同步：", "每轮结算后自动刷新参战魔兽。");
-        DrawCatalogProgressHelpLineStart("原生图鉴：", "需与 ");
-        DrawCatalogProgressHighlightedText("劳妲", new Vector4(1f, 0.82f, 0.25f, 1f));
-        ImGui.SameLine(0f, 0f);
-        ImGui.TextUnformatted(" 对话打开 ");
-        ImGui.SameLine(0f, 0f);
-        DrawCatalogProgressHighlightedText("原生魔兽图鉴", new Vector4(1f, 0.82f, 0.25f, 1f));
-        ImGui.SameLine(0f, 0f);
-        ImGui.TextUnformatted(" 来同步数据，将鼠标放到对应魔兽上 1 秒即可。");
-        DrawCatalogProgressHelpLine("25级：", "满级经验显示为 --/--，未同步数据显示 --。");
-    }
-
-    private static void DrawCatalogProgressHelpLine(string label, string description)
-    {
-        DrawCatalogProgressHelpLineStart(label, description);
-    }
-
-    private static void DrawCatalogProgressHelpLineStart(string label, string description)
-    {
-        ImGui.TextColored(new Vector4(1f, 0.25f, 0.25f, 1f), label);
-        ImGui.SameLine(0f, 4f);
-        ImGui.TextUnformatted(description);
-    }
-
-    private static void DrawCatalogProgressHighlightedText(string text, Vector4 color)
-    {
-        ImGui.SameLine(0f, 0f);
-        ImGui.TextColored(color, text);
     }
 
     private void DrawCurrentPetParty(BeastmasterPartyPreset preset)
@@ -2543,8 +2794,10 @@ public sealed class PluginUI
             ImGui.SetTooltip("当前没有魔兽时，按兽笛 1→2→3 使用首个可用技能；释放后等待 1 秒确认召唤。");
         }
 
-        DrawCompactSettingCheckbox("鼓劲", "鼓劲 · 好了就放：御兽之心为 0 时正常判断；御兽之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用鼓劲（44905）。", nameof(configuration.AutoDrumEnabled), configuration.AutoDrumEnabled);
-        DrawCompactSettingCheckbox("声援", "声援 · 好了就放：兽灵之心为 0 时正常判断；兽灵之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用声援（44904）。", nameof(configuration.AutoCheerEnabled), configuration.AutoCheerEnabled);
+        DrawCompactSettingCheckbox("鼓劲", "鼓劲 · 好了就放：御兽之心为 0 时判断；御兽之心为 3 且技力为 0 时也判断。技能系统允许时自动使用鼓劲（44905）。", nameof(configuration.AutoDrumEnabled), configuration.AutoDrumEnabled);
+        DrawCompactSettingCheckbox("声援", "声援 · 好了就放：兽灵之心为 0 时判断；兽灵之心为 3 且兽力为 0 时也判断。技能系统允许时自动使用声援（44904）。", nameof(configuration.AutoCheerEnabled), configuration.AutoCheerEnabled);
+        DrawCompactSettingCheckbox("借用", "借用 · 好了就放：借用当前魔兽的本能技能（44895），借用后魔兽技变为借用技能。默认关闭，暂不参与自动输出。", nameof(configuration.AutoBorrowEnabled), configuration.AutoBorrowEnabled);
+        DrawCompactSettingCheckbox("魔兽技", "魔兽技 · 好了就放：释放借用后的本能技能（44886 调整后）。默认关闭，暂不参与自动输出。", nameof(configuration.AutoBeastSkillEnabled), configuration.AutoBeastSkillEnabled);
 
         var autoRecoveryItemEnabled = configuration.AutoRecoveryItemEnabled;
         if (ImGui.Checkbox("低血量自动使用恢复药", ref autoRecoveryItemEnabled))
@@ -3123,6 +3376,12 @@ public sealed class PluginUI
                 case nameof(configuration.AutoCheerEnabled):
                     configuration.AutoCheerEnabled = value;
                     break;
+                case nameof(configuration.AutoBorrowEnabled):
+                    configuration.AutoBorrowEnabled = value;
+                    break;
+                case nameof(configuration.AutoBeastSkillEnabled):
+                    configuration.AutoBeastSkillEnabled = value;
+                    break;
             }
             configuration.Save();
         }
@@ -3176,7 +3435,7 @@ public sealed class PluginUI
         DrawDebugActionRow(
             "##DebugProjectDataType",
             ref debugProjectDataType,
-            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0魔兽恢复药扫描\0内容道具容器扫描\0XBM界面扫描\0XBM道具结构\0奇弈道具列表\0魔兽等级经验结构\0斗兽结算等级经验\0魔兽编队结构\0",
+            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0魔兽恢复药扫描\0内容道具容器扫描\0XBM界面扫描\0XBM道具结构\0奇弈道具列表\0魔兽等级经验结构\0斗兽结算等级经验\0魔兽编队结构\0驯兽师养成数据模块\0",
             "读取##DebugProjectData",
             RunDebugProjectData);
 
@@ -3249,6 +3508,7 @@ public sealed class PluginUI
             13 => debugDataService.GetBeastLevelExperienceProbe(),
             14 => debugDataService.GetBeastResultProgressionProbe(),
             15 => debugDataService.GetPetPartyStructureProbe(),
+            16 => debugDataService.GetXbmModuleProbe(),
             _ => "未知项目资料类型。",
         });
     }

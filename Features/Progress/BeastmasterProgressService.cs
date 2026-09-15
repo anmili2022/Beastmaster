@@ -139,6 +139,61 @@ public sealed class BeastmasterProgressService
         return changed;
     }
 
+    public bool IsAchievementCompleted(int achievementId)
+    {
+        var characterKey = CurrentCharacterKey;
+        return characterKey.Length > 0
+            && configuration.ProgressByCharacter.TryGetValue(characterKey, out var progress)
+            && progress.CompletedAchievements.Contains(achievementId);
+    }
+
+    public int ReplaceAchievementProgress(IReadOnlySet<int> completedIds)
+    {
+        var characterKey = CurrentCharacterKey;
+        if (characterKey.Length == 0)
+        {
+            return 0;
+        }
+
+        if (!configuration.ProgressByCharacter.TryGetValue(characterKey, out var progress))
+        {
+            progress = new BeastmasterCharacterProgress();
+            configuration.ProgressByCharacter[characterKey] = progress;
+        }
+
+        var changed = 0;
+        foreach (var group in BeastmasterAchievementCatalog.Groups)
+        {
+            foreach (var achievementId in group.AchievementIds)
+            {
+                var shouldBeCompleted = completedIds.Contains(achievementId);
+                var isCompleted = progress.CompletedAchievements.Contains(achievementId);
+                if (shouldBeCompleted == isCompleted)
+                {
+                    continue;
+                }
+
+                if (shouldBeCompleted)
+                {
+                    progress.CompletedAchievements.Add(achievementId);
+                }
+                else
+                {
+                    progress.CompletedAchievements.Remove(achievementId);
+                }
+
+                changed++;
+            }
+        }
+
+        if (changed > 0)
+        {
+            configuration.Save();
+        }
+
+        return changed;
+    }
+
     public BeastmasterBeastProgress? GetBeastProgress(int number)
     {
         var characterKey = CurrentCharacterKey;

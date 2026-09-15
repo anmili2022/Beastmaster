@@ -12,7 +12,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private DateTime lastSaveFailureUtc = DateTime.MinValue;
 
-    public int Version { get; set; } = 33;
+    public int Version { get; set; } = 36;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -46,6 +46,8 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool AutoDrumEnabled { get; set; }
     public bool AutoCheerEnabled { get; set; }
     public bool AutoSafeShieldEnabled { get; set; }
+    public bool AutoBorrowEnabled { get; set; }
+    public bool AutoBeastSkillEnabled { get; set; }
     public bool AutoRecoveryItemEnabled { get; set; }
     public float AutoRecoveryItemHpThreshold { get; set; } = 30f;
     public bool WhistleRotationEnabled { get; set; }
@@ -70,6 +72,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public int SelectedRuleIndex { get; set; }
     public List<BeastmasterRuleSetDefinition> RuleSets { get; set; } = [];
     public int SelectedPartyPresetIndex { get; set; }
+    public string SelectedArenaTab { get; set; } = "party";
     public List<BeastmasterPartyPreset> PartyPresets { get; set; } = [];
     public Dictionary<string, BeastmasterCharacterProgress> ProgressByCharacter { get; set; }
         = new(StringComparer.Ordinal);
@@ -82,6 +85,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         {
             progress.CompletedObjectives ??= new HashSet<string>(StringComparer.Ordinal);
             progress.BeastProgress ??= [];
+            progress.CompletedAchievements ??= [];
         }
         Sequences ??= [];
         RuleSets ??= [];
@@ -354,6 +358,31 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             SortCatalogByBeastLevel = false;
             SortCatalogByBeastLevelDescending = false;
             Version = 33;
+            Save();
+        }
+
+        if (Version < 34)
+        {
+            SelectedArenaTab = "party";
+            Version = 34;
+            Save();
+        }
+
+        if (Version < 35)
+        {
+            foreach (var progress in ProgressByCharacter.Values)
+            {
+                progress.CompletedAchievements ??= [];
+            }
+            Version = 35;
+            Save();
+        }
+
+        if (Version < 36)
+        {
+            AutoBorrowEnabled = false;
+            AutoBeastSkillEnabled = false;
+            Version = 36;
             Save();
         }
 

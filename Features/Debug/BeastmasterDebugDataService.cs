@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Text;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Dalamud.Game.NativeWrapper;
 using Dalamud.Game.Inventory;
@@ -1689,6 +1690,132 @@ public sealed class BeastmasterDebugDataService
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string GetXbmModuleProbe()
+    {
+        const uint maximumDumpSize = 0x400;
+        const int structSize = 0xA8;
+        var builder = new StringBuilder()
+            .AppendLine("类型: 驯兽师养成数据模块探针")
+            .AppendLine("模式: 只读，不写入内存，不触发回调")
+            .AppendLine("目标: 定位 50 只宝宝等级/经验的常驻数据结构（XBMModule）")
+            .AppendLine("采集方法: 建议打开魔兽图鉴或魔兽编队后再读取；在宝宝获得经验前后各采集一次并对比差异")
+            .AppendLine();
+
+        var module = XBMModule.Instance();
+        if (module == null)
+        {
+            builder.AppendLine("XBMModule 不可用（未登录或游戏界面未加载）。");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine($"XBMModule Address=0x{(nint)module:X}")
+            .AppendLine($"CharacterContentId={module->CharacterContentId}")
+            .AppendLine($"FileName=\"{module->FileNameString}\"")
+            .AppendLine($"TempDataPtr=0x{module->TempDataPtr:X}")
+            .AppendLine($"TempDataBytesWritten=0x{module->TempDataBytesWritten:X} ({module->TempDataBytesWritten})")
+            .AppendLine($"GetDataSize()={module->GetDataSize()} | GetFileSize()={module->GetFileSize()} | GetFileVersion()={module->GetFileVersion()} | GetFileType()=0x{module->GetFileType():X}")
+            .AppendLine($"HasChanges={module->HasChanges} | IsSavePending={module->IsSavePending} | IsVirtual={module->IsVirtual}");
+
+        var structBytes = (byte*)module;
+        builder.AppendLine().AppendLine($"XBMModule 结构内存（{structSize} 字节，4 字节整数视图）:");
+        for (var offset = 0; offset < structSize; offset += 16)
+        {
+            builder.Append($"  +0x{offset:X2}:");
+            for (var column = 0; column < 16 && offset + column + 3 < structSize; column += 4)
+            {
+                var value = *(uint*)(structBytes + offset + column);
+                builder.Append($" {value,10}");
+            }
+            builder.AppendLine();
+        }
+
+        builder.AppendLine().AppendLine($"XBMModule 结构内存（{structSize} 字节，字节视图）:");
+        for (var offset = 0; offset < structSize; offset += 16)
+        {
+            builder.Append($"  +0x{offset:X2}:");
+            for (var column = 0; column < 16 && offset + column < structSize; column++)
+            {
+                builder.Append($" {structBytes[offset + column]:X2}");
+            }
+            builder.AppendLine();
+        }
+
+        AppendPointerDump(builder, structBytes, 0x48, "结构 +0x48 指针");
+        AppendPointerDump(builder, structBytes, 0x58, "结构 +0x58 指针");
+
+        var dataPtr = module->TempDataPtr;
+        var dataSize = module->TempDataBytesWritten;
+        if (dataPtr == 0 || dataSize == 0)
+        {
+            builder.AppendLine().AppendLine("TempDataPtr 为空：养成数据尚未加载。");
+            builder.AppendLine("请先在游戏内打开魔兽图鉴（/魔兽图鉴）或魔兽编队窗口，让数据加载后再重新读取。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var dumpSize = (int)Math.Min(dataSize, maximumDumpSize);
+        var bytes = (byte*)dataPtr;
+        builder.AppendLine().AppendLine($"TempDataPtr 缓冲区 4 字节整数视图（前 {dumpSize}/{dataSize} 字节）:");
+        for (var offset = 0; offset + 3 < dumpSize; offset += 16)
+        {
+            builder.Append($"  +0x{offset:X3}:");
+            for (var column = 0; column < 16 && offset + column + 3 < dumpSize; column += 4)
+            {
+                var value = *(uint*)(bytes + offset + column);
+                builder.Append($" {value,10}");
+            }
+            builder.AppendLine();
+        }
+
+        builder.AppendLine().AppendLine($"TempDataPtr 缓冲区字节视图（前 {dumpSize}/{dataSize} 字节）:");
+        for (var offset = 0; offset < dumpSize; offset += 16)
+        {
+            builder.Append($"  +0x{offset:X3}:");
+            for (var column = 0; column < 16 && offset + column < dumpSize; column++)
+            {
+                builder.Append($" {bytes[offset + column]:X2}");
+            }
+            builder.AppendLine();
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static unsafe void AppendPointerDump(StringBuilder builder, byte* basePointer, int offset, string label)
+    {
+        const int pointerDumpSize = 0x100;
+        var pointer = *(nint*)(basePointer + offset);
+        builder.AppendLine().AppendLine($"{label}=0x{pointer:X}");
+        if (pointer == 0)
+        {
+            builder.AppendLine("  指针为空。");
+            return;
+        }
+
+        var bytes = (byte*)pointer;
+        builder.AppendLine($"  4 字节整数视图（{pointerDumpSize} 字节）:");
+        for (var i = 0; i < pointerDumpSize; i += 16)
+        {
+            builder.Append($"    +0x{i:X3}:");
+            for (var column = 0; column < 16; column += 4)
+            {
+                var value = *(uint*)(bytes + i + column);
+                builder.Append($" {value,10}");
+            }
+            builder.AppendLine();
+        }
+
+        builder.AppendLine($"  字节视图（{pointerDumpSize} 字节）:");
+        for (var i = 0; i < pointerDumpSize; i += 16)
+        {
+            builder.Append($"    +0x{i:X3}:");
+            for (var column = 0; column < 16; column++)
+            {
+                builder.Append($" {bytes[i + column]:X2}");
+            }
+            builder.AppendLine();
+        }
     }
 
     private static string JoinLines(params string[] lines)

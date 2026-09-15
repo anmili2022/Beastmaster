@@ -25,11 +25,14 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint WhistleTwoActionId = 44892;
     private const uint WhistleThreeActionId = 44894;
     private const uint FinalStrikeActionId = 44891;
+    private const uint BorrowActionId = 44895;
+    private const uint BeastSkillActionId = 44886;
     private const uint SmashActionId = 44879;
     private const uint BiteActionId = 44883;
     private const uint ShieldActionId = 44885;
     private const uint CaptureActionId = 44880;
     private const uint CaptureStatusId = 4626;
+    private const int MaxAbilitiesPerGcdWindow = 2;
     private readonly BeastmasterConfiguration configuration;
     private readonly BeastmasterSequenceService sequenceService;
     private readonly BeastmasterRuleService ruleService;
@@ -44,6 +47,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private DateTime capturePendingUntilUtc = DateTime.MinValue;
     private ulong captureTargetId;
     private ulong activeTargetId;
+    private int abilitiesUsedInGcdWindow;
     private uint pendingCooperationActionId;
     private uint pendingCooperationStatusId;
     private DateTime pendingCooperationUntilUtc = DateTime.MinValue;
@@ -672,14 +676,20 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        uint actionId;
+        if (actionManager->AnimationLock > 0f)
+        {
+            StatusText = "等待可执行状态";
+            NextActionName = "-";
+            NextActionReason = "技能动画锁中";
+            return;
+        }
 
         if ((configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
             && pendingCooperationActionId != 0)
         {
-            actionId = pendingCooperationActionId;
+            var pendingActionId = pendingCooperationActionId;
             StatusText = "自动协作技中...";
-            NextActionName = GetActionName(actionId);
+            NextActionName = GetActionName(pendingActionId);
             if (pendingCooperationStatusId != 0 && !HasSelfStatus(pendingCooperationStatusId))
             {
                 NextActionReason = $"等待自身获得{GetAttributeStatusName(pendingCooperationStatusId)}（{pendingCooperationStatusId}）";
@@ -692,7 +702,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 if (!BeastmasterActionHelper.IsPlayerInActionRange(
                         player,
                         target,
-                        actionId,
+                        pendingActionId,
                         out var followUpDistance,
                         out var followUpRange))
                 {
@@ -701,8 +711,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                     return;
                 }
 
-                var cooperationStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
-                var cooperationUsed = TryUseAdvancedAction(actionManager, actionId, target.GameObjectId, cooperationStatus);
+                var cooperationStatus = actionManager->GetActionStatus(ActionType.Action, pendingActionId, target.GameObjectId);
+                var cooperationUsed = TryUseAdvancedAction(actionManager, pendingActionId, target.GameObjectId, cooperationStatus);
                 if (!cooperationUsed)
                 {
                     ReportCooperationDiagnostic(
@@ -715,7 +725,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 if (cooperationUsed)
                 {
                     ReportCooperationDiagnostic($"已完成协作第二段：{NextActionName}", "completed");
-                    ReportAutoOutputSuccess(NextActionName, actionId);
+                    ReportAutoOutputSuccess(NextActionName, pendingActionId);
                     nextActionUtc = now.AddMilliseconds(700);
                     ResetCooperationState();
                 }
@@ -724,226 +734,120 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             }
         }
 
-        if (configuration.AutoReleaseEnabled
-            && gauge.SummonEntry != null
-            && TryUseReleaseAction(actionManager, gauge, target, now))
+        var basicComboActionId = GetBasicComboActionId(actionManager, player);
+        var gcdReady = actionManager->GetActionStatus(ActionType.Action, basicComboActionId, target.GameObjectId) == 0;
+
+        if (gcdReady)
         {
-            return;
+            if ((configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
+                && TryUseThirdFormAction(actionManager, gauge, target.GameObjectId, now))
+            {
+                abilitiesUsedInGcdWindow = 0;
+                return;
+            }
+
+            if (TryUseCooperationFirstStage(actionManager, gauge, player, target, now))
+            {
+                abilitiesUsedInGcdWindow = 0;
+                return;
+            }
+
+            if (configuration.BasicComboEnabled && TryUseBasicCombo(actionManager, player, target, now))
+            {
+                abilitiesUsedInGcdWindow = 0;
+                return;
+            }
+
+            if (!configuration.BasicComboEnabled)
+            {
+                StatusText = "等待可用技能";
+                NextActionName = "-";
+                NextActionReason = "基础技能（1→2→3）已关闭";
+                return;
+            }
         }
-
-        if (TryUseFinalStrike(actionManager, gauge, target.GameObjectId, now))
+        else if (abilitiesUsedInGcdWindow < MaxAbilitiesPerGcdWindow)
         {
-            return;
-        }
+            if (TryUseCapture(actionManager, player, target, canCapture, hasOwnCapture, now))
+            {
+                abilitiesUsedInGcdWindow++;
+                return;
+            }
 
-        if (configuration.AutoDrumEnabled
-            && (gauge.BeastHeartStacks == 0 || IsThirdFormEnabled)
-            && TryUseEnabledSelfAction(actionManager, DrumActionId, "鼓劲", now))
-        {
-            return;
-        }
+            if (configuration.AutoBorrowEnabled
+                && TryUseBorrow(actionManager, now))
+            {
+                abilitiesUsedInGcdWindow++;
+                return;
+            }
 
-        if (configuration.AutoCheerEnabled
-            && (gauge.BeastSoulStacks == 0 || IsThirdFormEnabled)
-            && TryUseEnabledSelfAction(actionManager, CheerActionId, "声援", now))
-        {
-            return;
-        }
+            if (configuration.AutoBeastSkillEnabled
+                && TryUseBeastSkill(actionManager, target.GameObjectId, now))
+            {
+                abilitiesUsedInGcdWindow++;
+                return;
+            }
 
-        if ((configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
-            && TryUseThirdFormAction(actionManager, gauge, target.GameObjectId, now))
-        {
-            return;
-        }
+            if (configuration.AutoDrumEnabled
+                && (gauge.BeastHeartStacks == 0 || (gauge.BeastHeartStacks == 3 && gauge.Tp == 0))
+                && TryUseEnabledSelfAction(actionManager, DrumActionId, "鼓劲", now))
+            {
+                abilitiesUsedInGcdWindow++;
+                return;
+            }
 
-        if ((configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
-            && pendingCooperationActionId == 0
-            && TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var cooperationActionId, out var cooperationFollowUpId, out var cooperationStatusId))
-        {
-            actionId = cooperationActionId;
-            StatusText = "自动协作技中...";
-            NextActionName = GetActionName(actionId);
-            NextActionReason = $"协作技第一段，下一段：{GetActionName(cooperationFollowUpId)}";
+            if (configuration.AutoCheerEnabled
+                && (gauge.BeastSoulStacks == 0 || (gauge.BeastSoulStacks == 3 && gauge.BeastPower == 0))
+                && TryUseEnabledSelfAction(actionManager, CheerActionId, "声援", now))
+            {
+                abilitiesUsedInGcdWindow++;
+                return;
+            }
 
-            if (!BeastmasterActionHelper.IsPlayerInActionRange(
+            if (configuration.AutoReleaseEnabled
+                && gauge.SummonEntry != null
+                && TryUseReleaseAction(actionManager, gauge, target, now))
+            {
+                abilitiesUsedInGcdWindow++;
+                return;
+            }
+
+            if (TryUseFinalStrike(actionManager, gauge, target.GameObjectId, now))
+            {
+                abilitiesUsedInGcdWindow++;
+                return;
+            }
+
+            if (configuration.AutoSafeShieldEnabled
+                && now >= nextSafeShieldAttemptUtc
+                && BeastmasterActionHelper.IsPlayerInActionRange(
                     player,
                     target,
-                    actionId,
-                    out var cooperationDistance,
-                    out var cooperationRange))
+                    SafeShieldActionId,
+                    out var shieldDistance,
+                    out _)
+                && shieldDistance <= SafeShieldRange
+                && TryUseEnabledSelfAction(actionManager, SafeShieldActionId, "安全盾牌", now, target.GameObjectId))
             {
-                NextActionReason = $"等待进入协作技射程（当前 {cooperationDistance:0.##}/{cooperationRange:0.##} yalms）";
-                ReportAutoOutputDiagnostic(NextActionName, $"距离不足（当前 {cooperationDistance:0.##}/{cooperationRange:0.##} yalms）", "range");
+                nextSafeShieldAttemptUtc = now.Add(SafeShieldRequestCooldown);
+                abilitiesUsedInGcdWindow++;
                 return;
             }
 
-            var cooperationStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
-            var cooperationUsed = TryUseAdvancedAction(actionManager, actionId, target.GameObjectId, cooperationStatus);
-            if (!cooperationUsed)
+            if (TryUseUltimateAuto(actionManager, gauge, player, target, now))
             {
-                NextActionReason = $"协作技请求失败（状态码 {cooperationStatus}）";
-                ReportAutoOutputDiagnostic(NextActionName,
-                    $"技能系统状态码 {cooperationStatus}；技力 {gauge.Tp}/250，兽力 {gauge.BeastPower}/250",
-                    $"status-{cooperationStatus}");
-            }
-            if (cooperationUsed)
-            {
-                ReportAutoOutputSuccess(NextActionName, actionId);
-                nextActionUtc = now.AddMilliseconds(700);
-                pendingCooperationActionId = cooperationFollowUpId;
-                pendingCooperationStatusId = cooperationStatusId;
-                pendingCooperationUntilUtc = now.AddSeconds(7);
-            }
-
-            return;
-        }
-
-        if (configuration.AutoSafeShieldEnabled
-            && now >= nextSafeShieldAttemptUtc
-            && BeastmasterActionHelper.IsPlayerInActionRange(
-                player,
-                target,
-                SafeShieldActionId,
-                out var shieldDistance,
-                out _)
-            && shieldDistance <= SafeShieldRange
-            && TryUseEnabledSelfAction(actionManager, SafeShieldActionId, "安全盾牌", now, target.GameObjectId))
-        {
-            nextSafeShieldAttemptUtc = now.Add(SafeShieldRequestCooldown);
-            return;
-        }
-
-        if (configuration.AutoCaptureTryCapture
-            && canCapture
-            && (configuration.ForceCaptureEnabled || !hasOwnCapture))
-        {
-            actionId = captureActionId;
-        }
-        else if (!configuration.BasicComboEnabled)
-        {
-            StatusText = "等待可用技能";
-            NextActionName = "-";
-            NextActionReason = "基础技能（1→2→3）已关闭";
-            return;
-        }
-        else
-        {
-            actionId = actionManager->Combo.Timer > 0f && actionManager->Combo.Action == biteActionId && player.Level >= 12
-                ? shieldActionId
-                : actionManager->Combo.Timer > 0f && actionManager->Combo.Action == smashActionId && player.Level >= 2
-                    ? biteActionId
-                    : smashActionId;
-        }
-
-        StatusText = configuration.AutoCaptureTryCapture
-            ? configuration.ForceCaptureEnabled ? "强制捕获中..." : "自动捕获中..."
-            : "自动攻击中...";
-        NextActionName = GetActionName(actionId);
-        NextActionReason = configuration.AutoCaptureTryCapture && !configuration.ForceCaptureEnabled && !hasOwnCapture && !canCapture
-            ? $"目标血量 {targetHpPercent:0.#}% 高于捕获阈值 {configuration.CaptureHpThreshold:0.#}%"
-            : configuration.AutoCaptureTryCapture && configuration.ForceCaptureEnabled && !canCapture
-                ? $"强制捕获仍受血量阈值限制：目标血量 {targetHpPercent:0.#}% 高于阈值 {configuration.CaptureHpThreshold:0.#}%"
-                : configuration.AutoCaptureTryCapture && configuration.ForceCaptureEnabled
-                    ? "强制捕获模式，无视捕获状态但仍受血量阈值限制"
-                : actionId == BeastmasterUltimateActionId
-                ? "高级技能已开启，技力和兽力满足大招门槛"
-            : hasOwnCapture
-                ? "目标已有自身施加的捕获状态"
-                : hasOtherCapture
-                    ? "目标有他人施加的捕获状态，不影响自身捕获判断"
-                    : "技能系统允许使用";
-
-        if (!BeastmasterActionHelper.IsPlayerInActionRange(
-                player,
-                target,
-                actionId,
-                out var playerDistance,
-                out var actionRange))
-        {
-            if (actionId != captureActionId)
-            {
-                NextActionReason = $"等待进入技能射程（当前 {playerDistance:0.##}/{actionRange:0.##} yalms）";
-                ReportAutoOutputDiagnostic(NextActionName, $"距离不足（当前 {playerDistance:0.##}/{actionRange:0.##} yalms）", "range");
-                return;
-            }
-
-            actionId = actionManager->Combo.Timer > 0f && actionManager->Combo.Action == biteActionId && player.Level >= 12
-                ? shieldActionId
-                : actionManager->Combo.Timer > 0f && actionManager->Combo.Action == smashActionId && player.Level >= 2
-                    ? biteActionId
-                    : smashActionId;
-            NextActionName = GetActionName(actionId);
-            if (!BeastmasterActionHelper.IsPlayerInActionRange(
-                    player,
-                    target,
-                    actionId,
-                    out playerDistance,
-                    out actionRange))
-            {
-                NextActionReason = $"捕获超出射程，基础技能也在射程外（当前 {playerDistance:0.##}/{actionRange:0.##} yalms）";
-                ReportAutoOutputDiagnostic(NextActionName, $"距离不足（当前 {playerDistance:0.##}/{actionRange:0.##} yalms）", "range");
+                abilitiesUsedInGcdWindow++;
                 return;
             }
         }
 
-        var availability = BeastmasterActionHelper.GetAvailability(actionId, target.GameObjectId);
-        NextActionReason = availability.Reason;
-        if (!availability.CanUse && actionId == captureActionId)
-        {
-            actionId = actionManager->Combo.Timer > 0f && actionManager->Combo.Action == biteActionId && player.Level >= 12
-                ? shieldActionId
-                : actionManager->Combo.Timer > 0f && actionManager->Combo.Action == smashActionId && player.Level >= 2
-                    ? biteActionId
-                    : smashActionId;
-            NextActionName = GetActionName(actionId);
-            if (!BeastmasterActionHelper.IsPlayerInActionRange(
-                    player,
-                    target,
-                    actionId,
-                    out playerDistance,
-                    out actionRange))
-            {
-                NextActionReason = $"捕获不可用，基础技能在射程外（当前 {playerDistance:0.##}/{actionRange:0.##} yalms）";
-                ReportAutoOutputDiagnostic(NextActionName, $"距离不足（当前 {playerDistance:0.##}/{actionRange:0.##} yalms）", "range");
-                return;
-            }
-            availability = BeastmasterActionHelper.GetAvailability(actionId, target.GameObjectId);
-            NextActionReason = "捕获未进入技能范围，回退基础技能；" + availability.Reason;
-        }
-        if (!availability.CanUse)
-        {
-            ReportAutoOutputDiagnostic(NextActionName,
-                $"{availability.Reason}；技力 {gauge.Tp}/250，兽力 {gauge.BeastPower}/250",
-                availability.Reason);
-            return;
-        }
-
-        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
-        var used = actionStatus == 0
-            && actionManager->UseAction(ActionType.Action, actionId, target.GameObjectId);
-        if (used)
-        {
-            ReportAutoOutputSuccess(NextActionName, actionId);
-            nextActionUtc = now.AddMilliseconds(actionId == captureActionId ? 700 : actionId == BeastmasterUltimateActionId ? 700 : 250);
-            if (actionId == captureActionId)
-            {
-                capturePendingUntilUtc = now.AddMilliseconds(1200);
-                CaptureState = "已发送请求，等待结果";
-                StatusText = "等待捕获结果";
-                NextActionReason = "等待自身捕获状态刷新";
-            }
-        }
-        else if (actionId == captureActionId)
-        {
-            CaptureState = "捕获请求失败";
-            ReportAutoOutputDiagnostic(NextActionName, "UseAction 返回 false", "use-action-false");
-        }
-        else if (!used)
-        {
-            ReportAutoOutputDiagnostic(NextActionName,
-                $"技能系统状态码 {actionStatus}；技力 {gauge.Tp}/250，兽力 {gauge.BeastPower}/250",
-                $"status-{actionStatus}");
-        }
+        StatusText = abilitiesUsedInGcdWindow >= MaxAbilitiesPerGcdWindow
+            ? "等待 GCD 转好"
+            : "等待可执行状态";
+        NextActionName = "-";
+        NextActionReason = abilitiesUsedInGcdWindow >= MaxAbilitiesPerGcdWindow
+            ? "本 GCD 窗口已放满 2 个能力技，等待 GCD"
+            : "等待 GCD 或能力技就绪";
     }
 
     private static bool IsArenaTerritory(uint territoryId)
@@ -1121,6 +1025,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private void ResetTargetScopedState()
     {
         activeTargetId = 0;
+        abilitiesUsedInGcdWindow = 0;
         lastAutoOutputSummary = string.Empty;
         lastSuccessfulActionUtc = DateTime.MinValue;
         nextActionUtc = DateTime.MinValue;
@@ -1128,6 +1033,269 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         nextFinalStrikeAttemptUtc = DateTime.MinValue;
         ResetCaptureState();
         ResetCooperationState();
+    }
+
+    private static unsafe uint GetBasicComboActionId(ActionManager* actionManager, IBattleChara player)
+    {
+        if (actionManager->Combo.Timer > 0f && actionManager->Combo.Action == BiteActionId && player.Level >= 12)
+        {
+            return ShieldActionId;
+        }
+
+        if (actionManager->Combo.Timer > 0f && actionManager->Combo.Action == SmashActionId && player.Level >= 2)
+        {
+            return BiteActionId;
+        }
+
+        return SmashActionId;
+    }
+
+    private unsafe bool TryUseBasicCombo(
+        ActionManager* actionManager,
+        IBattleChara player,
+        IBattleChara target,
+        DateTime now)
+    {
+        var actionId = GetBasicComboActionId(actionManager, player);
+        StatusText = "自动攻击中...";
+        NextActionName = GetActionName(actionId);
+        NextActionReason = "基础连击（1→2→3）";
+
+        if (!BeastmasterActionHelper.IsPlayerInActionRange(
+                player,
+                target,
+                actionId,
+                out var distance,
+                out var range))
+        {
+            NextActionReason = $"等待进入技能射程（当前 {distance:0.##}/{range:0.##} yalms）";
+            ReportAutoOutputDiagnostic(NextActionName, $"距离不足（当前 {distance:0.##}/{range:0.##} yalms）", "range");
+            return false;
+        }
+
+        var availability = BeastmasterActionHelper.GetAvailability(actionId, target.GameObjectId);
+        NextActionReason = availability.Reason;
+        if (!availability.CanUse)
+        {
+            ReportAutoOutputDiagnostic(NextActionName, availability.Reason, availability.Reason);
+            return false;
+        }
+
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, availability.ActionId, target.GameObjectId);
+        if (actionStatus != 0
+            || !actionManager->UseAction(ActionType.Action, availability.ActionId, target.GameObjectId))
+        {
+            ReportAutoOutputDiagnostic(NextActionName, $"技能系统状态码 {actionStatus}", $"status-{actionStatus}");
+            return false;
+        }
+
+        ReportAutoOutputSuccess(NextActionName, availability.ActionId);
+        nextActionUtc = now.AddMilliseconds(250);
+        return true;
+    }
+
+    private unsafe bool TryUseCooperationFirstStage(
+        ActionManager* actionManager,
+        BeastmasterGaugeSnapshot gauge,
+        IBattleChara player,
+        IBattleChara target,
+        DateTime now)
+    {
+        if ((!configuration.BeastHeartCooperationEnabled && !configuration.BeastSoulCooperationEnabled)
+            || pendingCooperationActionId != 0
+            || !TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var cooperationActionId, out var cooperationFollowUpId, out var cooperationStatusId))
+        {
+            return false;
+        }
+
+        StatusText = "自动协作技中...";
+        NextActionName = GetActionName(cooperationActionId);
+        NextActionReason = $"协作技第一段，下一段：{GetActionName(cooperationFollowUpId)}";
+
+        if (!BeastmasterActionHelper.IsPlayerInActionRange(
+                player,
+                target,
+                cooperationActionId,
+                out var distance,
+                out var range))
+        {
+            NextActionReason = $"等待进入协作技射程（当前 {distance:0.##}/{range:0.##} yalms）";
+            ReportAutoOutputDiagnostic(NextActionName, $"距离不足（当前 {distance:0.##}/{range:0.##} yalms）", "range");
+            return false;
+        }
+
+        var status = actionManager->GetActionStatus(ActionType.Action, cooperationActionId, target.GameObjectId);
+        if (!TryUseAdvancedAction(actionManager, cooperationActionId, target.GameObjectId, status))
+        {
+            NextActionReason = $"协作技请求失败（状态码 {status}）";
+            ReportAutoOutputDiagnostic(NextActionName,
+                $"技能系统状态码 {status}；技力 {gauge.Tp}/250，兽力 {gauge.BeastPower}/250",
+                $"status-{status}");
+            return false;
+        }
+
+        ReportAutoOutputSuccess(NextActionName, cooperationActionId);
+        nextActionUtc = now.AddMilliseconds(700);
+        pendingCooperationActionId = cooperationFollowUpId;
+        pendingCooperationStatusId = cooperationStatusId;
+        pendingCooperationUntilUtc = now.AddSeconds(7);
+        return true;
+    }
+
+    private unsafe bool TryUseBorrow(ActionManager* actionManager, DateTime now)
+    {
+        if (actionManager->GetActionStatus(ActionType.Action, BorrowActionId, 0) != 0)
+        {
+            return false;
+        }
+
+        var adjustedBeastSkill = actionManager->GetAdjustedActionId(BeastSkillActionId);
+        if (adjustedBeastSkill is >= 44896 and <= 44903)
+        {
+            return false;
+        }
+
+        StatusText = "自动借用...";
+        NextActionName = GetActionName(BorrowActionId);
+        NextActionReason = "借用当前魔兽的本能技能";
+        if (!actionManager->UseAction(ActionType.Action, BorrowActionId, 0))
+        {
+            ReportAutoOutputDiagnostic(NextActionName, "UseAction 返回 false", "use-action-false");
+            return false;
+        }
+
+        ReportAutoOutputSuccess(NextActionName, BorrowActionId);
+        nextActionUtc = now.AddMilliseconds(700);
+        return true;
+    }
+
+    private unsafe bool TryUseBeastSkill(ActionManager* actionManager, ulong targetId, DateTime now)
+    {
+        var adjustedActionId = actionManager->GetAdjustedActionId(BeastSkillActionId);
+        if (adjustedActionId is < 44896 or > 44903)
+        {
+            return false;
+        }
+
+        if (actionManager->GetActionStatus(ActionType.Action, adjustedActionId, targetId) != 0)
+        {
+            return false;
+        }
+
+        StatusText = "自动魔兽技...";
+        NextActionName = GetActionName(adjustedActionId);
+        NextActionReason = "释放借用技能";
+        if (!actionManager->UseAction(ActionType.Action, adjustedActionId, targetId))
+        {
+            ReportAutoOutputDiagnostic(NextActionName, "UseAction 返回 false", "use-action-false");
+            return false;
+        }
+
+        ReportAutoOutputSuccess(NextActionName, adjustedActionId);
+        nextActionUtc = now.AddMilliseconds(700);
+        return true;
+    }
+
+    private unsafe bool TryUseUltimateAuto(
+        ActionManager* actionManager,
+        BeastmasterGaugeSnapshot gauge,
+        IBattleChara player,
+        IBattleChara target,
+        DateTime now)
+    {
+        if (configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
+        {
+            return false;
+        }
+
+        if (gauge.SummonEntry == null
+            || gauge.Tp < BeastmasterGaugeSnapshot.ComboGaugeRequirement
+            || gauge.BeastPower < BeastmasterGaugeSnapshot.ComboGaugeRequirement)
+        {
+            return false;
+        }
+
+        var actionId = BeastmasterUltimateActionId;
+        if (!BeastmasterActionHelper.IsPlayerInActionRange(
+                player,
+                target,
+                actionId,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        var status = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
+        if (status != 0 || !actionManager->UseAction(ActionType.Action, actionId, target.GameObjectId))
+        {
+            return false;
+        }
+
+        StatusText = "自动大招...";
+        NextActionName = GetActionName(actionId);
+        NextActionReason = "技力和兽力满足大招门槛";
+        ReportAutoOutputSuccess(NextActionName, actionId);
+        nextActionUtc = now.AddMilliseconds(700);
+        return true;
+    }
+
+    private unsafe bool TryUseCapture(
+        ActionManager* actionManager,
+        IBattleChara player,
+        IBattleChara target,
+        bool canCapture,
+        bool hasOwnCapture,
+        DateTime now)
+    {
+        if (!configuration.AutoCaptureTryCapture
+            || !canCapture
+            || (!configuration.ForceCaptureEnabled && hasOwnCapture))
+        {
+            return false;
+        }
+
+        var actionId = captureActionId;
+        StatusText = configuration.ForceCaptureEnabled ? "强制捕获中..." : "自动捕获中...";
+        NextActionName = GetActionName(actionId);
+        NextActionReason = configuration.ForceCaptureEnabled
+            ? "强制捕获模式，无视捕获状态但仍受血量阈值限制"
+            : "目标血量达到捕获阈值";
+
+        if (!BeastmasterActionHelper.IsPlayerInActionRange(
+                player,
+                target,
+                actionId,
+                out var distance,
+                out var range))
+        {
+            NextActionReason = $"捕获超出射程（当前 {distance:0.##}/{range:0.##} yalms）";
+            ReportAutoOutputDiagnostic(NextActionName, $"距离不足（当前 {distance:0.##}/{range:0.##} yalms）", "range");
+            return false;
+        }
+
+        var availability = BeastmasterActionHelper.GetAvailability(actionId, target.GameObjectId);
+        NextActionReason = availability.Reason;
+        if (!availability.CanUse)
+        {
+            ReportAutoOutputDiagnostic(NextActionName, availability.Reason, availability.Reason);
+            return false;
+        }
+
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
+        if (actionStatus != 0
+            || !actionManager->UseAction(ActionType.Action, actionId, target.GameObjectId))
+        {
+            CaptureState = "捕获请求失败";
+            ReportAutoOutputDiagnostic(NextActionName, "UseAction 返回 false 或状态码非零", "use-action-false");
+            return false;
+        }
+
+        ReportAutoOutputSuccess(NextActionName, actionId);
+        nextActionUtc = now.AddMilliseconds(700);
+        capturePendingUntilUtc = now.AddMilliseconds(1200);
+        CaptureState = "已发送请求，等待结果";
+        return true;
     }
 
     private unsafe bool TryUseReleaseAction(

@@ -28,6 +28,7 @@ public sealed class BeastmasterCharacterProgress
 {
     public HashSet<string> CompletedObjectives { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<int, BeastmasterBeastProgress> BeastProgress { get; set; } = [];
+    public HashSet<int> CompletedAchievements { get; set; } = [];
 }
 
 [Serializable]
