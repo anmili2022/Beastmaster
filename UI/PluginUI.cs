@@ -1976,6 +1976,7 @@ public sealed class PluginUI
         DrawBeastArenaTab("party", "奇盘编队", DrawPartyPresets);
         DrawBeastArenaTab("achievements", "斗兽成就", DrawBeastArenaAchievements);
         DrawBeastArenaTab("guide", "斗兽攻略", DrawBeastArenaGuide);
+        DrawBeastArenaTab("challenge-note", "挑战笔记", DrawBeastArenaChallengeNote);
         ImGui.EndTabBar();
         arenaTabSelectionInitialized = true;
     }
@@ -2088,6 +2089,48 @@ public sealed class PluginUI
             }
 
             ImGui.Spacing();
+        }
+    }
+
+    private static void DrawBeastArenaChallengeNote()
+    {
+        ImGui.Spacing();
+        ImGui.Text("挑战笔记");
+        ImGui.SameLine();
+        ImGui.TextDisabled("打开时同步「斗兽奇弈」相关挑战的完成情况。");
+        ImGui.Spacing();
+
+        var entries = BeastmasterChallengeNote.GetBeastArenaEntries();
+        if (entries.Count == 0)
+        {
+            ImGui.TextDisabled("未找到「斗兽奇弈」相关的挑战笔记条目。");
+            return;
+        }
+
+        if (!BeastmasterChallengeNote.IsLoaded())
+        {
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), "挑战笔记数据尚未加载，请先在游戏内打开一次挑战笔记。");
+            return;
+        }
+
+        var completedCount = entries.Count(entry => BeastmasterChallengeNote.IsComplete(entry.RowId));
+        ImGui.ProgressBar((float)completedCount / entries.Count, new Vector2(-1f, 0f), $"{completedCount}/{entries.Count}");
+        ImGui.Spacing();
+
+        foreach (var entry in entries)
+        {
+            var isCompleted = BeastmasterChallengeNote.IsComplete(entry.RowId);
+            var color = isCompleted
+                ? new Vector4(0.35f, 0.8f, 0.48f, 1f)
+                : new Vector4(0.9f, 0.32f, 0.3f, 1f);
+
+            ImGui.TextColored(color, isCompleted ? "[已完成]" : "[未完成]");
+            ImGui.SameLine();
+            ImGui.TextColored(color, entry.Name);
+            if (!string.IsNullOrWhiteSpace(entry.Description) && ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(entry.Description);
+            }
         }
     }
 
