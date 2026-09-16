@@ -10,6 +10,8 @@ public sealed record BeastmasterArenaGuideRound(
 
 public static class BeastmasterArenaGuide
 {
+    public const string Round3Author = "其他母肥角色@拂晓之间";
+
     public static IReadOnlyList<BeastmasterArenaGuideRound> Round3 { get; } =
     [
         new(

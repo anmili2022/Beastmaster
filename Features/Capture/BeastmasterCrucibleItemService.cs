@@ -21,8 +21,10 @@ public sealed unsafe class BeastmasterCrucibleItemService
     private const int InventoryOffset = 9092;
     private const int InventoryStride = 12;
     private const uint FirstRecoveryActionId = 46959;
-    private static readonly ushort[] RecoveryItemPriority = [78, 77, 76];
-    private static readonly ushort[] FangItemPriority = [133, 131, 129, 128];
+    private const ushort FirstRecoveryItemId = 76;
+    private static readonly TimeSpan RecoveryUseInterval = TimeSpan.FromSeconds(2);
+    private static readonly ushort[] RecoveryItemPriority = [140, 79, 78, 77, 76, 82, 81, 80, 135];
+    private static readonly ushort[] FangItemPriority = [133, 132, 131, 130, 129, 128];
 
     private DateTime nextUseUtc = DateTime.MinValue;
     private delegate* unmanaged<byte*, uint, byte, uint> getUseStatus;
@@ -31,7 +33,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
 
     public string LastFailureReason { get; private set; } = "未知原因";
 
-    public bool TryUseBestRecoveryItem(IBattleChara player, DateTime now, out ushort itemId)
+    public bool TryUseBestRecoveryItem(IBattleChara player, IBattleChara? target, DateTime now, out ushort itemId)
     {
         itemId = 0;
         if (now < nextUseUtc || player.IsDead || player.CurrentHp == 0)
@@ -97,7 +99,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
                 targets->SoftTarget = self;
                 hotbar->ExecuteSlot(&slot);
                 itemId = recoveryItemId;
-                nextUseUtc = now.AddSeconds(2);
+                nextUseUtc = now.Add(RecoveryUseInterval);
                 return true;
             }
             finally
@@ -106,31 +108,84 @@ public sealed unsafe class BeastmasterCrucibleItemService
             }
         }
 
-        LastFailureReason = "恢复药 78、77、76 均不存在或当前不可用";
+        var recoveryFailure = "恢复药套装 140、恢复药 79/78/77/76、药粉 82/81/80 和吸血药 135 均不存在或当前不可用";
+        if (target != null && !target.IsDead && target.CurrentHp > 0)
+        {
+            if (TryUseCrucibleItemOnTarget(134, target, now))
+            {
+                itemId = 134;
+                return true;
+            }
+
+            LastFailureReason = recoveryFailure + $"；吸血鬼之牙 134 不可用：{LastFailureReason}";
+            return false;
+        }
+
+        LastFailureReason = recoveryFailure + "；吸血鬼之牙需要有效敌对目标";
         return false;
     }
 
     public void Reset() => nextUseUtc = DateTime.MinValue;
 
-    public bool TryUseCrucibleItemOnTarget(BeastmasterCrucibleItemType itemType, IBattleChara player, IBattleChara target, DateTime now, out ushort itemId)
+    public bool TryUseCrucibleItemOnTarget(BeastmasterCrucibleItemType itemType, IBattleChara player, IBattleChara? target, DateTime now, out ushort itemId)
     {
         itemId = 0;
         if (itemType == BeastmasterCrucibleItemType.Recovery)
         {
-            return TryUseBestRecoveryItem(player, now, out itemId);
+            return TryUseBestRecoveryItem(player, target, now, out itemId);
         }
 
+        if (itemType == BeastmasterCrucibleItemType.VampireFang)
+        {
+            if (target != null && TryUseCrucibleItemOnTarget(134, target, now))
+            {
+                itemId = 134;
+                return true;
+            }
+
+            if (target == null)
+            {
+                LastFailureReason = "吸血鬼之牙需要有效敌对目标";
+            }
+            return false;
+        }
+
+        var selfItemId = itemType switch
+        {
+            BeastmasterCrucibleItemType.DodgeBook => (ushort)137,
+            BeastmasterCrucibleItemType.ReflectBook => (ushort)136,
+            BeastmasterCrucibleItemType.TimeSand => (ushort)138,
+            BeastmasterCrucibleItemType.StrengthMedicine => (ushort)104,
+            _ => (ushort)0,
+        };
+        if (selfItemId != 0)
+        {
+            if (TryUseCrucibleItemOnTarget(selfItemId, player, now))
+            {
+                itemId = selfItemId;
+                return true;
+            }
+
+            return false;
+        }
+
+        var fangFailures = new List<string>(FangItemPriority.Length);
         foreach (var fangItemId in FangItemPriority)
         {
-            if (TryUseCrucibleItemOnTarget(fangItemId, target, now))
+            if (target != null && TryUseCrucibleItemOnTarget(fangItemId, target, now))
             {
                 itemId = fangItemId;
                 return true;
             }
+
+            fangFailures.Add(target == null
+                ? $"{fangItemId}:需要有效敌对目标"
+                : $"{fangItemId}:{LastFailureReason}");
         }
 
-        if (FangItemPriority.Length == 0)
-            LastFailureReason = "尚未配置任何牙的 ID";
+        LastFailureReason = fangFailures.Count == 0
+            ? "尚未配置任何牙的 ID"
+            : "各种牙均不可用（" + string.Join("；", fangFailures) + "）";
         return false;
     }
 
@@ -250,7 +305,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
 
     private static bool CanUseOnSelf(ushort itemId, GameObject* self)
     {
-        var actionId = FirstRecoveryActionId + itemId - RecoveryItemPriority[^1];
+        var actionId = FirstRecoveryActionId + itemId - FirstRecoveryItemId;
         return ActionManager.CanUseActionOnTarget(actionId, self)
             && ActionManager.GetActionInRangeOrLoS(actionId, self, self) == 0;
     }

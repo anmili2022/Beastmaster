@@ -12,10 +12,11 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private DateTime lastSaveFailureUtc = DateTime.MinValue;
 
-    public int Version { get; set; } = 36;
+    public int Version { get; set; } = 44;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
+    public bool HideCompletedAchievements { get; set; }
     public bool SortCatalogByLocation { get; set; }
     public bool SortCatalogByLevel { get; set; }
     public bool SortCatalogByBeastLevel { get; set; }
@@ -43,6 +44,13 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool ArenaKeepAttentionEnabled { get; set; }
     public bool ArenaKeepProvokeEnabled { get; set; }
     public bool AutoReleaseEnabled { get; set; } = true;
+    public bool AutoReleaseWhistleOneEnabled { get; set; } = true;
+    public bool AutoReleaseWhistleTwoEnabled { get; set; } = true;
+    public bool AutoReleaseWhistleThreeEnabled { get; set; } = true;
+    public bool AutoReleaseBossOnly { get; set; }
+    public float AutoReleaseWhistleOneTargetHpThreshold { get; set; } = 100f;
+    public float AutoReleaseWhistleTwoTargetHpThreshold { get; set; } = 100f;
+    public float AutoReleaseWhistleThreeTargetHpThreshold { get; set; } = 100f;
     public bool AutoDrumEnabled { get; set; }
     public bool AutoCheerEnabled { get; set; }
     public bool AutoSafeShieldEnabled { get; set; }
@@ -386,6 +394,94 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             Save();
         }
 
+        if (Version < 37)
+        {
+            HideCompletedAchievements = false;
+            Version = 37;
+            Save();
+        }
+
+        if (Version < 38)
+        {
+            foreach (var ruleSet in RuleSets)
+            {
+                foreach (var rule in ruleSet.Rules)
+                {
+                    rule.HpThreshold = Math.Clamp(rule.HpThreshold <= 0f ? 50f : rule.HpThreshold, 1f, 100f);
+                }
+            }
+            Version = 38;
+            Save();
+        }
+
+        if (Version < 39)
+        {
+            foreach (var ruleSet in RuleSets)
+            {
+                foreach (var rule in ruleSet.Rules)
+                {
+                    var oldConditionType = (int)rule.ConditionType;
+                    if (oldConditionType is 6 or 7)
+                    {
+                        rule.ConditionType = BeastmasterRuleConditionType.SelfHp;
+                        rule.HpCondition = oldConditionType == 7
+                            ? BeastmasterRuleHpCondition.Below
+                            : BeastmasterRuleHpCondition.Above;
+                    }
+                }
+            }
+            Version = 39;
+            Save();
+        }
+
+        if (Version < 40)
+        {
+            Version = 40;
+            Save();
+        }
+
+        if (Version < 41)
+        {
+            foreach (var ruleSet in RuleSets)
+            {
+                foreach (var rule in ruleSet.Rules)
+                {
+                    rule.Conditions ??= [];
+                    rule.EnsureConditions();
+                    rule.ConditionJoinMode = Enum.IsDefined(rule.ConditionJoinMode)
+                        ? rule.ConditionJoinMode
+                        : BeastmasterRuleConditionJoinMode.All;
+                }
+            }
+            Version = 41;
+            Save();
+        }
+
+        if (Version < 42)
+        {
+            Version = 42;
+            Save();
+        }
+
+        if (Version < 43)
+        {
+            AutoReleaseWhistleOneEnabled = true;
+            AutoReleaseWhistleTwoEnabled = true;
+            AutoReleaseWhistleThreeEnabled = true;
+            AutoReleaseWhistleOneTargetHpThreshold = 100f;
+            AutoReleaseWhistleTwoTargetHpThreshold = 100f;
+            AutoReleaseWhistleThreeTargetHpThreshold = 100f;
+            Version = 43;
+            Save();
+        }
+
+        if (Version < 44)
+        {
+            AutoReleaseBossOnly = false;
+            Version = 44;
+            Save();
+        }
+
         if (PartyPresets.Count == 0)
         {
             PartyPresets.Add(new BeastmasterPartyPreset());
@@ -405,6 +501,11 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         {
             ruleSet.TerritoryIds ??= [];
             ruleSet.Rules ??= [];
+            foreach (var rule in ruleSet.Rules)
+            {
+                rule.Conditions ??= [];
+                rule.EnsureConditions();
+            }
         }
         SelectedRuleSetIndex = Math.Clamp(SelectedRuleSetIndex, 0, RuleSets.Count - 1);
         SelectedRuleIndex = Math.Clamp(SelectedRuleIndex, 0, Math.Max(0, RuleSets[SelectedRuleSetIndex].Rules.Count - 1));
@@ -412,6 +513,9 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         AutoFinalStrikeWhistleOneHpThreshold = Math.Clamp(AutoFinalStrikeWhistleOneHpThreshold, 1f, 100f);
         AutoFinalStrikeWhistleTwoHpThreshold = Math.Clamp(AutoFinalStrikeWhistleTwoHpThreshold, 1f, 100f);
         AutoFinalStrikeWhistleThreeHpThreshold = Math.Clamp(AutoFinalStrikeWhistleThreeHpThreshold, 1f, 100f);
+        AutoReleaseWhistleOneTargetHpThreshold = Math.Clamp(AutoReleaseWhistleOneTargetHpThreshold, 1f, 100f);
+        AutoReleaseWhistleTwoTargetHpThreshold = Math.Clamp(AutoReleaseWhistleTwoTargetHpThreshold, 1f, 100f);
+        AutoReleaseWhistleThreeTargetHpThreshold = Math.Clamp(AutoReleaseWhistleThreeTargetHpThreshold, 1f, 100f);
         AutoRecoveryItemHpThreshold = Math.Clamp(AutoRecoveryItemHpThreshold, 1f, 100f);
     }
 

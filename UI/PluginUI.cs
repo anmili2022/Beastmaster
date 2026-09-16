@@ -80,6 +80,7 @@ public sealed class PluginUI
     private string ruleImportStatus = string.Empty;
     private string partyPresetStatus = string.Empty;
     private bool arenaTabSelectionInitialized;
+    private bool wasInAchievementsTab;
 
     public PluginUI(
         BeastmasterConfiguration configuration,
@@ -736,6 +737,13 @@ public sealed class PluginUI
         DrawCombinationStep("3 笛召唤库西，使用", false, "，正常输出。");
 
         ImGui.Separator();
+        ImGui.Text("虫队 · 高1层速刷");
+        ImGui.TextColored(new Vector4(0.95f, 0.82f, 0.25f, 1f), "推荐阵容：螳螂 + 蜂鸟 + 胡蜂");
+        DrawCombinationStep("1 笛召唤螳螂，施加物理易伤", true, "，再使用");
+        DrawCombinationStep("2 笛召唤蜂鸟，使用", true, "「六连踹」（单体），再使用");
+        DrawCombinationStep("3 笛召唤胡蜂，等到 BOSS 血量低于 25% 时使用", false, "。");
+
+        ImGui.Separator();
         ImGui.Text("水队 · 参考阵容");
         ImGui.TextColored(new Vector4(0.35f, 0.75f, 1f, 1f), "蝾螈 + 巨型陆蟹 + 壳蟹");
         ImGui.TextWrapped("核心思路是由蝾螈和巨型陆蟹分别提供魔法易伤与水属性易伤，三号位壳蟹负责主要输出。");
@@ -1220,43 +1228,36 @@ public sealed class PluginUI
             configuration.Save();
         }
 
-        var conditionType = (int)rule.ConditionType;
+        rule.EnsureConditions();
+        var joinMode = (int)rule.ConditionJoinMode;
         ImGui.SetNextItemWidth(190f);
-        if (ImGui.Combo("检测类型", ref conditionType, "自身 BUFF\0目标 BUFF\0DataID BUFF\0DataID 读条\0目标读条\0目标 DATAID\0"))
+        if (ImGui.Combo("条件关系", ref joinMode, "全部满足（AND）\0任意满足（OR）\0"))
         {
-            rule.ConditionType = (BeastmasterRuleConditionType)conditionType;
+            rule.ConditionJoinMode = (BeastmasterRuleConditionJoinMode)joinMode;
             configuration.Save();
         }
-        if (rule.IsStatusRule)
+
+        for (var conditionIndex = 0; conditionIndex < rule.Conditions.Count; conditionIndex++)
         {
-            var statusCondition = (int)rule.StatusCondition;
-            ImGui.SetNextItemWidth(190f);
-            if (ImGui.Combo("BUFF 条件", ref statusCondition, "存在\0缺失\0"))
+            ImGui.Separator();
+            ImGui.Text($"条件 {conditionIndex + 1}");
+            DrawRuleConditionFields(rule, rule.Conditions[conditionIndex], conditionIndex);
+            if (rule.Conditions.Count > 1 && ImGui.Button($"删除条件##rule-condition-delete-{conditionIndex}"))
             {
-                rule.StatusCondition = (BeastmasterRuleStatusCondition)statusCondition;
+                rule.Conditions.RemoveAt(conditionIndex);
+                rule.SyncLegacyFieldsFromFirstCondition();
                 configuration.Save();
+                break;
             }
         }
-        if (rule.RequiresDataId)
+
+        ImGui.BeginDisabled(rule.Conditions.Count >= 10);
+        if (ImGui.Button("新增条件"))
         {
-            var dataId = (int)Math.Min(rule.DataId, int.MaxValue);
-            ImGui.SetNextItemWidth(190f);
-            if (ImGui.InputInt("DataID", ref dataId, 1, 100))
-            {
-                rule.DataId = (uint)Math.Max(0, dataId);
-                configuration.Save();
-            }
+            rule.Conditions.Add(new BeastmasterRuleCondition());
+            configuration.Save();
         }
-        var conditionId = (int)Math.Min(rule.ConditionId, int.MaxValue);
-        if (!rule.IsTargetDataIdRule)
-        {
-            ImGui.SetNextItemWidth(190f);
-            if (ImGui.InputInt(rule.IsStatusRule ? "BUFFID" : "读条 ID", ref conditionId, 1, 100))
-            {
-                rule.ConditionId = (uint)Math.Max(0, conditionId);
-                configuration.Save();
-            }
-        }
+        ImGui.EndDisabled();
 
         var actionType = (int)rule.ActionType;
         ImGui.SetNextItemWidth(120f);
@@ -1270,7 +1271,7 @@ public sealed class PluginUI
         {
             var itemType = (int)rule.CrucibleItemType;
             ImGui.SetNextItemWidth(190f);
-            if (ImGui.Combo("奇弈道具", ref itemType, "恢复药（321优先）\0各种牙\0"))
+            if (ImGui.Combo("奇弈道具", ref itemType, "恢复类道具\0各种牙\0闪躲之书\0反射之书\0时之沙\0魔兽刚力药\0吸血鬼之牙\0"))
             {
                 rule.CrucibleItemType = (BeastmasterCrucibleItemType)itemType;
                 configuration.Save();
@@ -1293,6 +1294,75 @@ public sealed class PluginUI
         ImGui.TextDisabled("目标技能始终对当前手动目标释放；DataID 对象只负责触发。技能失败后回退 ACR。");
     }
 
+    private void DrawRuleConditionFields(BeastmasterRuleDefinition rule, BeastmasterRuleCondition condition, int index)
+    {
+        var type = (int)condition.Type;
+        ImGui.SetNextItemWidth(190f);
+        if (ImGui.Combo($"检测类型##condition-{index}", ref type, "自身 BUFF\0目标 BUFF\0DataID BUFF\0DataID 读条\0目标读条\0目标 DATAID\0自身血量\0目标血量\0目标为 BOSS（IsBoss）\0"))
+        {
+            condition.Type = (BeastmasterRuleConditionType)type;
+            rule.SyncLegacyFieldsFromFirstCondition();
+            configuration.Save();
+        }
+
+        if (condition.IsStatusRule)
+        {
+            var statusCondition = (int)condition.StatusCondition;
+            ImGui.SetNextItemWidth(190f);
+            if (ImGui.Combo($"BUFF 条件##condition-{index}", ref statusCondition, "存在\0缺失\0"))
+            {
+                condition.StatusCondition = (BeastmasterRuleStatusCondition)statusCondition;
+                rule.SyncLegacyFieldsFromFirstCondition();
+                configuration.Save();
+            }
+        }
+
+        if (condition.RequiresDataId)
+        {
+            var dataId = (int)Math.Min(condition.DataId, int.MaxValue);
+            ImGui.SetNextItemWidth(190f);
+            if (ImGui.InputInt($"DataID##condition-{index}", ref dataId, 1, 100))
+            {
+                condition.DataId = (uint)Math.Max(0, dataId);
+                rule.SyncLegacyFieldsFromFirstCondition();
+                configuration.Save();
+            }
+        }
+
+        if (condition.IsHealthRule)
+        {
+            var hpCondition = (int)condition.HpCondition;
+            ImGui.SetNextItemWidth(190f);
+            if (ImGui.Combo($"血量条件##condition-{index}", ref hpCondition, "大于\0小于\0"))
+            {
+                condition.HpCondition = (BeastmasterRuleHpCondition)hpCondition;
+                rule.SyncLegacyFieldsFromFirstCondition();
+                configuration.Save();
+            }
+
+            var threshold = condition.HpThreshold;
+            ImGui.SetNextItemWidth(190f);
+            if (ImGui.InputFloat($"血量阈值##condition-{index}", ref threshold, 0f, 0f, "%.0f%%"))
+            {
+                condition.HpThreshold = Math.Clamp(threshold, 1f, 100f);
+                rule.SyncLegacyFieldsFromFirstCondition();
+                configuration.Save();
+            }
+        }
+        else if (condition.Type is not (BeastmasterRuleConditionType.TargetDataId or BeastmasterRuleConditionType.TargetIsBoss))
+        {
+            var conditionId = (int)Math.Min(condition.ConditionId, int.MaxValue);
+            ImGui.SetNextItemWidth(190f);
+            var label = condition.IsStatusRule ? "BUFFID" : "读条 ID";
+            if (ImGui.InputInt($"{label}##condition-{index}", ref conditionId, 1, 100))
+            {
+                condition.ConditionId = (uint)Math.Max(0, conditionId);
+                rule.SyncLegacyFieldsFromFirstCondition();
+                configuration.Save();
+            }
+        }
+    }
+
     private static BeastmasterRuleDefinition CloneRule(BeastmasterRuleDefinition source)
         => new()
         {
@@ -1300,8 +1370,20 @@ public sealed class PluginUI
             Name = source.Name + " 副本",
             ConditionType = source.ConditionType,
             StatusCondition = source.StatusCondition,
+            ConditionJoinMode = source.ConditionJoinMode,
+            Conditions = source.Conditions.Select(condition => new BeastmasterRuleCondition
+            {
+                Type = condition.Type,
+                StatusCondition = condition.StatusCondition,
+                DataId = condition.DataId,
+                ConditionId = condition.ConditionId,
+                HpCondition = condition.HpCondition,
+                HpThreshold = condition.HpThreshold,
+            }).ToList(),
             DataId = source.DataId,
             ConditionId = source.ConditionId,
+            HpCondition = source.HpCondition,
+            HpThreshold = source.HpThreshold,
             ActionType = source.ActionType,
             ActionId = source.ActionId,
             CrucibleItemType = source.CrucibleItemType,
@@ -1310,25 +1392,40 @@ public sealed class PluginUI
 
     private static string GetRuleSummary(BeastmasterRuleDefinition rule)
     {
-        var actor = rule.ConditionType switch
+        rule.EnsureConditions();
+        var condition = string.Join(
+            rule.ConditionJoinMode == BeastmasterRuleConditionJoinMode.All ? " AND " : " OR ",
+            rule.Conditions.Select(GetRuleConditionSummary));
+        if (rule.ActionType == BeastmasterRuleActionType.CrucibleItem)
+            return $"{condition} -> 道具 {BeastmasterRuleActions.GetCrucibleItemTypeName(rule.CrucibleItemType)}";
+        var action = BeastmasterRuleActions.Supported.FirstOrDefault(item => item.ActionId == rule.ActionId);
+        return $"{condition} -> {(string.IsNullOrEmpty(action.Name) ? rule.ActionId.ToString() : action.Name)}";
+    }
+
+    private static string GetRuleConditionSummary(BeastmasterRuleCondition condition)
+    {
+        var actor = condition.Type switch
         {
             BeastmasterRuleConditionType.SelfStatus => "自身",
             BeastmasterRuleConditionType.TargetStatus => "目标",
-            BeastmasterRuleConditionType.DataIdStatus => $"DataID {rule.DataId}",
-            BeastmasterRuleConditionType.DataIdCast => $"DataID {rule.DataId}",
+            BeastmasterRuleConditionType.DataIdStatus => $"DataID {condition.DataId}",
+            BeastmasterRuleConditionType.DataIdCast => $"DataID {condition.DataId}",
             BeastmasterRuleConditionType.TargetCast => "目标",
-            BeastmasterRuleConditionType.TargetDataId => $"目标DataID {rule.DataId}",
+            BeastmasterRuleConditionType.TargetDataId => $"目标DataID {condition.DataId}",
+            BeastmasterRuleConditionType.SelfHp => "自身血量",
+            BeastmasterRuleConditionType.TargetHp => "目标血量",
+            BeastmasterRuleConditionType.TargetIsBoss => "目标为 BOSS",
             _ => "未知",
         };
-        var condition = rule.IsStatusRule
-            ? $"{(rule.StatusCondition == BeastmasterRuleStatusCondition.Present ? "存在" : "缺少")} BUFF {rule.ConditionId}"
-            : rule.IsTargetDataIdRule
-                ? ""
-                : $"读条 {rule.ConditionId}";
-        if (rule.ActionType == BeastmasterRuleActionType.CrucibleItem)
-            return $"{actor}{condition} -> 道具 {BeastmasterRuleActions.GetCrucibleItemTypeName(rule.CrucibleItemType)}";
-        var action = BeastmasterRuleActions.Supported.FirstOrDefault(item => item.ActionId == rule.ActionId);
-        return $"{actor}{condition} -> {(string.IsNullOrEmpty(action.Name) ? rule.ActionId.ToString() : action.Name)}";
+        if (condition.IsStatusRule)
+            return $"{actor}{(condition.StatusCondition == BeastmasterRuleStatusCondition.Present ? "存在" : "缺少")} BUFF {condition.ConditionId}";
+        if (condition.Type == BeastmasterRuleConditionType.TargetDataId)
+            return actor;
+        if (condition.Type == BeastmasterRuleConditionType.TargetIsBoss)
+            return "目标最大血量 > 自身最大血量 × 5";
+        if (condition.IsHealthRule)
+            return $"{actor} {(condition.HpCondition == BeastmasterRuleHpCondition.Above ? ">" : "<")} {condition.HpThreshold:0.#}%";
+        return $"{actor}读条 {condition.ConditionId}";
     }
 
     private void DrawQuests()
@@ -1979,6 +2076,7 @@ public sealed class PluginUI
         DrawBeastArenaTab("challenge-note", "挑战笔记", DrawBeastArenaChallengeNote);
         ImGui.EndTabBar();
         arenaTabSelectionInitialized = true;
+        wasInAchievementsTab = configuration.SelectedArenaTab == "achievements";
     }
 
     private void DrawBeastArenaTab(string key, string label, System.Action draw)
@@ -2003,27 +2101,27 @@ public sealed class PluginUI
 
     private void DrawBeastArenaAchievements()
     {
-        ImGui.Spacing();
-        ImGui.Text("斗兽成就");
-        ImGui.SameLine();
-        ImGui.TextDisabled("按角色保存，点击同步读取当前角色完成情况。");
-        ImGui.Spacing();
-
-        if (ImGui.Button("同步当前角色成就"))
+        if (!wasInAchievementsTab)
         {
             achievementSyncService.RequestSync();
         }
 
+        ImGui.Spacing();
+        ImGui.Text("斗兽成就");
+        ImGui.SameLine();
+        ImGui.TextDisabled("按角色保存，打开页签自动同步完成情况。");
+        ImGui.Spacing();
+
         if (!string.IsNullOrWhiteSpace(achievementSyncService.Diagnostic))
         {
-            ImGui.SameLine();
             if (ImGui.Button("复制同步诊断"))
             {
                 ImGui.SetClipboardText(achievementSyncService.Diagnostic);
             }
+
+            ImGui.SameLine();
         }
 
-        ImGui.SameLine();
         ImGui.TextDisabled(achievementSyncService.Status);
         ImGui.Separator();
 
@@ -2042,6 +2140,18 @@ public sealed class PluginUI
         }
 
         ImGui.ProgressBar((float)completedCount / total, new Vector2(-1f, 0f), $"{completedCount}/{total}");
+
+        ImGui.Spacing();
+        var hideCompletedAchievements = configuration.HideCompletedAchievements;
+        if (ImGui.Checkbox("隐藏已完成", ref hideCompletedAchievements))
+        {
+            configuration.HideCompletedAchievements = hideCompletedAchievements;
+            configuration.Save();
+        }
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(1f, 0.82f, 0.25f, 1f), "传说级驯兽师分数线");
+        ImGui.TextDisabled(string.Join(" · ", BeastmasterAchievementCatalog.LegendaryPoints.Select(point => $"{point.Arena} {point.Points}")));
         ImGui.Spacing();
 
         foreach (var group in BeastmasterAchievementCatalog.Groups)
@@ -2051,6 +2161,12 @@ public sealed class PluginUI
 
             foreach (var achievementId in group.AchievementIds)
             {
+                if (configuration.HideCompletedAchievements
+                    && progressService.IsAchievementCompleted(achievementId))
+                {
+                    continue;
+                }
+
                 if (!achievementSheet.TryGetRow((uint)achievementId, out var achievement))
                 {
                     ImGui.TextDisabled($"#{achievementId} 未找到成就资料");
@@ -2147,14 +2263,14 @@ public sealed class PluginUI
 
         DrawGuideFloor("第一盘", null);
         DrawGuideFloor("第二盘", null);
-        DrawGuideFloor("第三盘", BeastmasterArenaGuide.Round3);
+        DrawGuideFloor("第三盘", BeastmasterArenaGuide.Round3, BeastmasterArenaGuide.Round3Author);
         DrawGuideFloor("高段第一盘", null);
         DrawGuideFloor("高段第二盘", null);
 
         ImGui.EndTabBar();
     }
 
-    private static void DrawGuideFloor(string label, IReadOnlyList<BeastmasterArenaGuideRound>? rounds)
+    private static void DrawGuideFloor(string label, IReadOnlyList<BeastmasterArenaGuideRound>? rounds, string? author = null)
     {
         if (!ImGui.BeginTabItem(label))
         {
@@ -2168,6 +2284,11 @@ public sealed class PluginUI
         else
         {
             ImGui.TextDisabled("黄色为 BOSS，灰色为小怪，红色为重点技能。");
+            if (!string.IsNullOrWhiteSpace(author))
+            {
+                ImGui.SameLine();
+                ImGui.TextDisabled($"作者：{author}");
+            }
             ImGui.Spacing();
             foreach (var round in rounds)
             {
@@ -2850,7 +2971,7 @@ public sealed class PluginUI
         }
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip("仅在斗兽奇弈战斗中生效；自身血量低于阈值时按 3级 → 2级 → 1级优先级使用奇弈恢复药。默认关闭。");
+            ImGui.SetTooltip("仅在斗兽奇弈战斗中生效；自身血量低于阈值时按恢复药套装 → 4/3/2/1级恢复药 → 3/2/1级药粉 → 魔兽吸血药 → 吸血鬼之牙优先级使用奇弈恢复道具。吸血鬼之牙需要当前敌对目标，成功使用后间隔 2 秒。默认关闭。");
         }
         if (configuration.AutoRecoveryItemEnabled)
         {
@@ -2901,6 +3022,30 @@ public sealed class PluginUI
         {
             configuration.AutoReleaseEnabled = releaseEnabled;
             configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("释放总开关；1、2、3 笛独立开关和目标血量阈值在下方设置。");
+        }
+        if (!compactFinalStrike)
+        {
+            DrawReleaseSettings("1 笛", nameof(configuration.AutoReleaseWhistleOneEnabled), configuration.AutoReleaseWhistleOneEnabled,
+                nameof(configuration.AutoReleaseWhistleOneTargetHpThreshold), configuration.AutoReleaseWhistleOneTargetHpThreshold);
+            DrawReleaseSettings("2 笛", nameof(configuration.AutoReleaseWhistleTwoEnabled), configuration.AutoReleaseWhistleTwoEnabled,
+                nameof(configuration.AutoReleaseWhistleTwoTargetHpThreshold), configuration.AutoReleaseWhistleTwoTargetHpThreshold);
+            DrawReleaseSettings("3 笛", nameof(configuration.AutoReleaseWhistleThreeEnabled), configuration.AutoReleaseWhistleThreeEnabled,
+                nameof(configuration.AutoReleaseWhistleThreeTargetHpThreshold), configuration.AutoReleaseWhistleThreeTargetHpThreshold);
+
+            var releaseBossOnly = configuration.AutoReleaseBossOnly;
+            if (ImGui.Checkbox("释放 · 只打BOSS", ref releaseBossOnly))
+            {
+                configuration.AutoReleaseBossOnly = releaseBossOnly;
+                configuration.Save();
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("开启后，仅当目标最大 HP 严格大于自身最大 HP × 5 时，当前笛才允许按目标血量阈值使用释放。默认关闭。");
+            }
         }
 
         // 暂时隐藏兽笛循环连招入口，保留实现以便后续恢复。
@@ -3144,6 +3289,66 @@ public sealed class PluginUI
                 break;
             case nameof(configuration.AutoFinalStrikeWhistleThreeHpThreshold):
                 configuration.AutoFinalStrikeWhistleThreeHpThreshold = value;
+                break;
+        }
+        configuration.Save();
+    }
+
+    private void DrawReleaseSettings(
+        string label,
+        string enabledProperty,
+        bool enabled,
+        string thresholdProperty,
+        float threshold)
+    {
+        if (ImGui.Checkbox($"释放 · {label}##{enabledProperty}", ref enabled))
+        {
+            SetReleaseEnabled(enabledProperty, enabled);
+        }
+
+        ImGui.SameLine();
+        threshold = Math.Clamp(threshold, 1f, 100f);
+        ImGui.SetNextItemWidth(100f);
+        if (ImGui.InputFloat($"##{thresholdProperty}", ref threshold, 1f, 5f, "%.0f%%"))
+        {
+            SetReleaseThreshold(thresholdProperty, threshold);
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip($"目标血量小于等于该阈值时允许 {label}释放，范围 1%~100%。");
+        }
+    }
+
+    private void SetReleaseEnabled(string propertyName, bool value)
+    {
+        switch (propertyName)
+        {
+            case nameof(configuration.AutoReleaseWhistleOneEnabled):
+                configuration.AutoReleaseWhistleOneEnabled = value;
+                break;
+            case nameof(configuration.AutoReleaseWhistleTwoEnabled):
+                configuration.AutoReleaseWhistleTwoEnabled = value;
+                break;
+            case nameof(configuration.AutoReleaseWhistleThreeEnabled):
+                configuration.AutoReleaseWhistleThreeEnabled = value;
+                break;
+        }
+        configuration.Save();
+    }
+
+    private void SetReleaseThreshold(string propertyName, float value)
+    {
+        value = Math.Clamp(value, 1f, 100f);
+        switch (propertyName)
+        {
+            case nameof(configuration.AutoReleaseWhistleOneTargetHpThreshold):
+                configuration.AutoReleaseWhistleOneTargetHpThreshold = value;
+                break;
+            case nameof(configuration.AutoReleaseWhistleTwoTargetHpThreshold):
+                configuration.AutoReleaseWhistleTwoTargetHpThreshold = value;
+                break;
+            case nameof(configuration.AutoReleaseWhistleThreeTargetHpThreshold):
+                configuration.AutoReleaseWhistleThreeTargetHpThreshold = value;
                 break;
         }
         configuration.Save();
