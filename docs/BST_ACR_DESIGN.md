@@ -253,7 +253,7 @@ BeastmasterSkillProfile
 2. 使用 `InstanceContentDirector + 0x2384 + inventorySlot * 12` 的 ItemId 二次校验映射，且要求 `InstanceContentType == 22`。
 3. 通过签名扫描取得原生可用状态函数和 Agent 映射刷新函数；任一签名失效时停用自动恢复药并记录警告，不盲目执行槽位。映射仅在 `director`、`TerritoryType` 或库存槽位 ItemId 变化时刷新。
 4. 使用恢复药对应 ActionId `46959~46961` 验证能否对玩家自身使用及距离/视线状态。
-5. 遍历 `RaptureHotbarModule` 的 0~17 号热键栏、每个热键栏 0~15 槽位，找到 `CommandType == 36` 且 `CommandId == displaySlot` 的真实槽位，再调用 `RaptureHotbarModule.ExecuteSlotById(hotbarId, slotId)` 执行；不使用 `ExecuteSlot` 传入临时构造的 `HotbarSlot`。
+5. 遍历 `RaptureHotbarModule` 的 0~17 号热键栏、每个热键栏 0~15 槽位，找到 `CommandType == 36` 且 `CommandId == displaySlot` 的真实槽位；临时将 `TargetSystem.SoftTarget` 设为请求目标，再调用 `RaptureHotbarModule.ExecuteSlotById(hotbarId, slotId)` 执行，最后恢复原软目标。恢复类道具使用玩家自身，各种牙和吸血鬼之牙使用有效敌对目标；不使用 `ExecuteSlot` 传入临时构造的 `HotbarSlot`。
 
 道具请求先进入最长 `2s` 的共享待执行队列，并在后续 Framework 更新中重新校验槽位、区域、目标、原生状态和动画锁。动画锁存在时保留请求等待；真正调用 `ExecuteSlotById` 后，恢复类道具设置 `2s` 防重复窗口。技能序列保持最高优先级；恢复药请求入队后本轮不再执行规则或普通 ACR。
 

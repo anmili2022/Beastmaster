@@ -436,10 +436,21 @@ public sealed unsafe class BeastmasterCrucibleItemService
         var inventoryBefore = *(ushort*)((byte*)director + InventoryOffset + inventorySlot * InventoryStride);
         var lockBefore = actionManager->AnimationLock;
         var hpBefore = self == null ? 0u : ((IBattleChara)target).CurrentHp;
-        var executed = hotbar->ExecuteSlotById((uint)hotbarId, (uint)hotbarSlotId);
+        var previousSoftTarget = targets->SoftTarget;
+        byte executed;
+        try
+        {
+            targets->SoftTarget = targetObj;
+            executed = hotbar->ExecuteSlotById((uint)hotbarId, (uint)hotbarSlotId);
+        }
+        finally
+        {
+            targets->SoftTarget = previousSoftTarget;
+        }
+
         var inventoryAfter = *(ushort*)((byte*)director + InventoryOffset + inventorySlot * InventoryStride);
         executionProbes.Add(
-            $"[执行探针 {DateTime.Now:HH:mm:ss.fff}] 道具{itemId} 显示槽={displaySlot} 热键栏={hotbarId}/{hotbarSlotId}：ExecuteSlotById={executed} "
+            $"[执行探针 {DateTime.Now:HH:mm:ss.fff}] 道具{itemId} 目标={target.GameObjectId} 显示槽={displaySlot} 热键栏={hotbarId}/{hotbarSlotId}：ExecuteSlotById={executed} "
             + $"执行前 AnimationLock={lockBefore:0.###}/背包itemId={inventoryBefore}/HP={hpBefore} → "
             + $"执行后 AnimationLock={actionManager->AnimationLock:0.###}/背包itemId={inventoryAfter}");
         if (executed == 0)
