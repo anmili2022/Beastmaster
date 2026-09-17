@@ -147,7 +147,7 @@ public sealed unsafe class BeastmasterAchievementSyncService
 - 每个成就算一行：`ID` `名称` `描述`，右侧显示点数（`[5]`/`[10]`/`[20]`）与完成标记（✓ 绿色 / ✗ 灰色）。
 - 有称号的成就（`Title` 非空）在描述后追加「称号：xxx」。
 - 完成后显示绿色，未完成灰色。
-- 顶部「同步当前角色成就」按钮调用 `achievementSyncService.RequestSync()`；同步中禁用按钮，显示状态文本。
+- 打开「斗兽成就」页签时自动调用 `achievementSyncService.RequestSync()`；不再显示同步按钮，同步中显示状态文本，失败时提供复制诊断按钮。
 - 若 `Diagnostic` 非空，提供「复制同步诊断」按钮（与图鉴同步一致）。
 
 ## 实施步骤

@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Text;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.Event;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -18,10 +19,211 @@ public sealed class BeastmasterDebugDataService
     private const int ResultLimit = 200;
     private readonly BeastmasterCountdownService countdownService;
 
+    private bool useActionScanActive;
+    private uint useActionScanNext;
+    private uint useActionScanEnd;
+    private ushort useActionScanItemId;
+    private uint useActionScanInventorySlot;
+    private readonly StringBuilder useActionScanLog = new();
+
     public BeastmasterDebugDataService(BeastmasterCountdownService countdownService)
     {
         this.countdownService = countdownService;
     }
+
+    public unsafe string StartUseActionScan(int displaySlot, uint startActionId, uint endActionId)
+    {
+        var agentModule = AgentModule.Instance();
+        var agent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)497);
+        var eventFramework = EventFramework.Instance();
+        var director = eventFramework == null ? null : eventFramework->GetInstanceContentDirector();
+        if (agent == null || director == null || (int)director->InstanceContentType != 22)
+        {
+            return "启动失败：需在斗兽塔内。";
+        }
+
+        if (displaySlot < 0 || displaySlot >= 10)
+        {
+            return "启动失败：显示槽位越界。";
+        }
+
+        var entry = agent + DebugMappingOffset + displaySlot * DebugMappingStride;
+        var invSlot = *(uint*)entry;
+        var itemId = ((ushort*)entry)[2];
+        if (itemId == 0)
+        {
+            return "启动失败：该显示槽位为空。";
+        }
+
+        useActionScanActive = true;
+        useActionScanNext = startActionId;
+        useActionScanEnd = endActionId;
+        useActionScanItemId = itemId;
+        useActionScanInventorySlot = invSlot;
+        useActionScanLog.Clear();
+        useActionScanLog.AppendLine($"[ActionId扫描] 启动：槽位{displaySlot}/道具{itemId}/范围 {startActionId}~{endActionId}");
+        useActionScanLog.AppendLine("每个 actionId 等待动画锁归零后单独执行，命中（HP上涨或锁出现）后停止。");
+        return "ActionId 扫描已启动，请保持界面打开并等待输出。";
+    }
+
+    public unsafe void UpdateUseActionScan()
+    {
+        if (!useActionScanActive)
+        {
+            return;
+        }
+
+        var actionManager = ActionManager.Instance();
+        var eventFramework = EventFramework.Instance();
+        var director = eventFramework == null ? null : eventFramework->GetInstanceContentDirector();
+        if (actionManager == null || director == null || (int)director->InstanceContentType != 22)
+        {
+            useActionScanLog.AppendLine("扫描中止：上下文不可用。");
+            useActionScanActive = false;
+            return;
+        }
+
+        if (actionManager->AnimationLock > 0f)
+        {
+            return;
+        }
+
+        if (useActionScanNext > useActionScanEnd)
+        {
+            useActionScanLog.AppendLine("扫描完成：范围内未发现有效 actionId。");
+            useActionScanActive = false;
+            return;
+        }
+
+        var actionId = useActionScanNext;
+        useActionScanNext++;
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var selfTargetId = player?.GameObjectId ?? 0;
+        var statusSelf = actionManager->GetActionStatus(ActionType.Action, actionId, selfTargetId);
+        var statusNoTarget = actionManager->GetActionStatus(ActionType.Action, actionId, 0);
+        var hpBefore = player?.CurrentHp ?? 0;
+        var invBefore = *(ushort*)((byte*)director + DebugInventoryOffset + useActionScanInventorySlot * DebugInventoryStride);
+        var lockBefore = actionManager->AnimationLock;
+        var used = actionManager->UseAction(ActionType.Action, actionId, selfTargetId);
+        var hpAfter = player?.CurrentHp ?? 0;
+        var invAfter = *(ushort*)((byte*)director + DebugInventoryOffset + useActionScanInventorySlot * DebugInventoryStride);
+        var lockAfter = actionManager->AnimationLock;
+        var hit = hpAfter != hpBefore || invAfter != invBefore;
+        useActionScanLog.AppendLine(
+            $"  action={actionId} 状态(self/0)={statusSelf}/{statusNoTarget} UseAction={used}"
+            + $" 锁{lockBefore:0.###}→{lockAfter:0.###} HP {hpBefore}→{hpAfter} 背包 {invBefore}→{invAfter}{(hit ? "  <== 命中!" : "")}");
+        if (hit)
+        {
+            useActionScanLog.AppendLine($"扫描命中 actionId={actionId}，停止。");
+            useActionScanActive = false;
+        }
+    }
+
+    public bool TryTakeUseActionScanLog(out string log)
+    {
+        if (useActionScanLog.Length == 0)
+        {
+            log = string.Empty;
+            return false;
+        }
+
+        log = useActionScanLog.ToString().TrimEnd();
+        useActionScanLog.Clear();
+        return true;
+    }
+
+    public bool IsUseActionScanActive => useActionScanActive;
+
+    private bool captureActive;
+    private readonly StringBuilder captureLog = new();
+
+    public string StartCrucibleClickCapture()
+    {
+        if (captureActive)
+        {
+            return "捕获已在进行中。";
+        }
+
+        captureActive = true;
+        captureLog.Clear();
+        captureLog.AppendLine("[奇弈点击捕获] 已启动。请手动点击奇弈道具面板第1格，然后点击停止按钮查看。");
+        DalamudApi.AddonLifecycle.RegisterListener(Dalamud.Game.Addon.Lifecycle.AddonEvent.PreReceiveEvent, OnCaptureAddonEvent);
+        DalamudApi.AgentLifecycle.RegisterListener(Dalamud.Game.Agent.AgentEvent.PreReceiveEvent, (Dalamud.Game.Agent.AgentId)497, OnCaptureAgentEvent);
+        return "捕获已启动，请手动点击奇弈道具格。";
+    }
+
+    public string StopCrucibleClickCapture()
+    {
+        if (captureActive)
+        {
+            DalamudApi.AddonLifecycle.UnregisterListener(Dalamud.Game.Addon.Lifecycle.AddonEvent.PreReceiveEvent, OnCaptureAddonEvent);
+            DalamudApi.AgentLifecycle.UnregisterListener(Dalamud.Game.Agent.AgentEvent.PreReceiveEvent, (Dalamud.Game.Agent.AgentId)497, OnCaptureAgentEvent);
+            captureActive = false;
+        }
+
+        var result = captureLog.ToString().TrimEnd();
+        return result.Length == 0 ? "捕获未在运行或没有记录。" : result;
+    }
+
+    public bool IsCaptureActive => captureActive;
+
+    private void OnCaptureAddonEvent(
+        Dalamud.Game.Addon.Lifecycle.AddonEvent type,
+        Dalamud.Game.Addon.Lifecycle.AddonArgTypes.AddonArgs args)
+    {
+        if (!captureActive || args.AddonName is null || !args.AddonName.StartsWith("XBM", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (args is Dalamud.Game.Addon.Lifecycle.AddonArgTypes.AddonReceiveEventArgs receiveArgs)
+        {
+            captureLog.AppendLine(
+                $"[Addon] {args.AddonName} AtkEventType={receiveArgs.AtkEventType} EventParam={receiveArgs.EventParam}");
+        }
+        else
+        {
+            captureLog.AppendLine($"[Addon] {args.AddonName} {args.GetType().Name}");
+        }
+    }
+
+    private unsafe void OnCaptureAgentEvent(
+        Dalamud.Game.Agent.AgentEvent type,
+        Dalamud.Game.Agent.AgentArgTypes.AgentArgs args)
+    {
+        if (!captureActive)
+        {
+            return;
+        }
+
+        if (args is Dalamud.Game.Agent.AgentArgTypes.AgentReceiveEventArgs receiveArgs)
+        {
+            var valueCount = (int)Math.Min(receiveArgs.ValueCount, 20u);
+            var values = (AtkValue*)receiveArgs.AtkValues;
+            var renderedValues = new List<string>(valueCount);
+            for (var index = 0; index < valueCount && values != null; index++)
+            {
+                renderedValues.Add($"[{index}]={FormatAgentValue(values[index])}");
+            }
+
+            captureLog.AppendLine(
+                $"[Agent497] Kind={receiveArgs.EventKind} Count={receiveArgs.ValueCount} {string.Join(", ", renderedValues)}");
+        }
+        else
+        {
+            captureLog.AppendLine($"[Agent497] {args.GetType().Name}");
+        }
+    }
+
+    private static string FormatAgentValue(AtkValue value)
+        => value.TypeCode() switch
+        {
+            2 => $"Bool:{value.Bool}",
+            3 => $"Int:{value.Int}",
+            4 or 5 => $"UInt:{value.UInt}",
+            8 or 10 => $"String:\"{value.String.ToString() ?? string.Empty}\"",
+            _ => $"Type:{value.Type}",
+        };
 
     public string GetCharacter()
     {
@@ -1689,6 +1891,442 @@ public sealed class BeastmasterDebugDataService
             builder.AppendLine($"共找到 {itemCount} 个奇弈道具。");
         }
 
+        return builder.ToString().TrimEnd();
+    }
+
+    private const string DebugUseStatusSignature = "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 41 8B F8 48 8B D9 83 FA 0A 0F 83 ?? ?? ?? ?? 8B C2 48 8D 14 40 48 8D 34 91 0F B7 86 84 23 00 00";
+    private const string DebugRefreshMappingSignature = "48 89 5C 24 18 57 48 83 EC 30 48 8B D9 E8 ?? ?? ?? ?? 48 8B C8 E8 ?? ?? ?? ?? 48 8B F8 48 85 C0 0F 84 ?? ?? ?? ?? 48 89 6C 24 40 33 ED";
+    private const int DebugMappingOffset = 80;
+    private const int DebugMappingStride = 8;
+    private const int DebugInventoryOffset = 9092;
+    private const int DebugInventoryStride = 12;
+
+    public unsafe string TestCrucibleExecuteSlot(int displaySlot)
+    {
+        var builder = new StringBuilder()
+            .AppendLine("类型: 奇弈道具 ExecuteSlot 测试")
+            .AppendLine("模式: 实际执行一个奇弈道具（会使用道具！）")
+            .AppendLine($"目标显示槽位: {displaySlot}")
+            .AppendLine($"TerritoryType: {DalamudApi.ClientState.TerritoryType}")
+            .AppendLine();
+
+        var actionManager = ActionManager.Instance();
+        var hotbar = RaptureHotbarModule.Instance();
+        var uimodule = FFXIVClientStructs.FFXIV.Client.UI.UIModule.Instance();
+        var agentModule = AgentModule.Instance();
+        var agent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)497);
+        var eventFramework = EventFramework.Instance();
+        var director = eventFramework == null ? null : eventFramework->GetInstanceContentDirector();
+        if (actionManager == null || hotbar == null || agent == null || director == null
+            || (int)director->InstanceContentType != 22)
+        {
+            builder.AppendLine("前置条件不满足：需在斗兽塔内且奇弈界面可用。");
+            builder.AppendLine($"  ActionManager={(actionManager == null ? "null" : "ok")} Hotbar={(hotbar == null ? "null" : "ok")}"
+                + $" Agent497={(agent == null ? "null" : "ok")} Director={(director == null ? "null" : "other")}"
+                + (director == null ? "" : $" InstanceContentType={(int)director->InstanceContentType}"));
+            return builder.ToString().TrimEnd();
+        }
+
+        if (!DalamudApi.SigScanner.TryScanText(DebugUseStatusSignature, out var statusAddress)
+            || !DalamudApi.SigScanner.TryScanText(DebugRefreshMappingSignature, out var refreshAddress))
+        {
+            builder.AppendLine("原生签名未找到。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var refreshMapping = (delegate* unmanaged<byte*, void>)refreshAddress;
+        var getUseStatus = (delegate* unmanaged<byte*, uint, byte, uint>)statusAddress;
+        refreshMapping(agent);
+        builder.AppendLine("映射刷新完成。当前显示槽位映射（displaySlot: inventorySlot/itemId）:");
+        for (var i = 0; i < 10; i++)
+        {
+            var entry = agent + DebugMappingOffset + i * DebugMappingStride;
+            var invSlot = *(uint*)entry;
+            var itemId = ((ushort*)entry)[2];
+            var invItemId = invSlot < 10
+                ? *(ushort*)((byte*)director + DebugInventoryOffset + invSlot * DebugInventoryStride)
+                : (ushort)0;
+            builder.AppendLine($"  [{i}] inv={invSlot} itemId={itemId} 背包校验={invItemId}");
+        }
+
+        if (displaySlot < 0 || displaySlot >= 10)
+        {
+            builder.AppendLine("显示槽位越界。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var targetEntry = agent + DebugMappingOffset + displaySlot * DebugMappingStride;
+        var targetInvSlot = *(uint*)targetEntry;
+        var targetItemId = ((ushort*)targetEntry)[2];
+        builder.AppendLine();
+        builder.AppendLine($"选中显示槽位 {displaySlot}: inventorySlot={targetInvSlot} itemId={targetItemId}");
+        if (targetItemId == 0)
+        {
+            builder.AppendLine("该槽位为空，无法执行。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var useStatus = getUseStatus((byte*)director, targetInvSlot, 0);
+        builder.AppendLine($"getUseStatus={useStatus} HP={(player == null ? 0 : player.CurrentHp)}");
+
+        if (actionManager->AnimationLock > 0f)
+        {
+            builder.AppendLine();
+            builder.AppendLine($"当前动画锁={actionManager->AnimationLock:0.###}，请等动作结束（锁归零）后再运行本工具。");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("开始遍历 CommandType（判据：动画锁 0→正 / HP变化 / 背包itemId变化）:");
+
+        for (var commandType = 22; commandType <= 45; commandType++)
+        {
+            if (actionManager->AnimationLock > 0f)
+            {
+                builder.AppendLine($"  遍历中断：出现动画锁={actionManager->AnimationLock:0.###}（可能上一个类型触发了动作）");
+                break;
+            }
+
+            var hpBefore = player == null ? 0u : player.CurrentHp;
+            var invBefore = *(ushort*)((byte*)director + DebugInventoryOffset + targetInvSlot * DebugInventoryStride);
+            var slot = new RaptureHotbarModule.HotbarSlot
+            {
+                CommandType = (RaptureHotbarModule.HotbarSlotType)commandType,
+                CommandId = (uint)displaySlot,
+            };
+
+            string outcome;
+            try
+            {
+                var result = hotbar->ExecuteSlot(&slot);
+                outcome = $"返回={result}";
+            }
+            catch (Exception ex)
+            {
+                outcome = $"异常 {ex.GetType().Name}";
+            }
+
+            var lockAfter = actionManager->AnimationLock;
+            var hpAfter = player == null ? 0u : player.CurrentHp;
+            var invAfter = *(ushort*)((byte*)director + DebugInventoryOffset + targetInvSlot * DebugInventoryStride);
+            var hit = lockAfter > 0f || hpAfter != hpBefore || invAfter != invBefore;
+            builder.AppendLine($"  CommandType={commandType}: {outcome} 锁=0→{lockAfter:0.###} HP {hpBefore}→{hpAfter} 背包 {invBefore}→{invAfter}{(hit ? "  <== 有变化!" : "")}");
+
+            if (hit)
+            {
+                builder.AppendLine($"  命中 CommandType={commandType}，停止遍历。");
+                break;
+            }
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("说明: 若所有值都无变化，说明奇弈道具栏不走 ExecuteSlot，需改用 addon callback。");
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string TestCrucibleUseAction(int displaySlot)
+    {
+        var builder = new StringBuilder()
+            .AppendLine("类型: 奇弈道具 UseAction 测试")
+            .AppendLine("模式: 通过 ActionManager.UseAction(ActionType.Action, actionId) 使用道具（会使用道具！）")
+            .AppendLine($"目标显示槽位: {displaySlot}")
+            .AppendLine($"TerritoryType: {DalamudApi.ClientState.TerritoryType}")
+            .AppendLine();
+
+        var actionManager = ActionManager.Instance();
+        var agentModule = AgentModule.Instance();
+        var agent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)497);
+        var eventFramework = EventFramework.Instance();
+        var director = eventFramework == null ? null : eventFramework->GetInstanceContentDirector();
+        if (actionManager == null || agent == null || director == null || (int)director->InstanceContentType != 22)
+        {
+            builder.AppendLine("前置条件不满足：需在斗兽塔内。");
+            return builder.ToString().TrimEnd();
+        }
+
+        if (!DalamudApi.SigScanner.TryScanText(DebugRefreshMappingSignature, out var refreshAddress))
+        {
+            builder.AppendLine("原生签名未找到。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var refreshMapping = (delegate* unmanaged<byte*, void>)refreshAddress;
+        refreshMapping(agent);
+
+        if (displaySlot < 0 || displaySlot >= 10)
+        {
+            builder.AppendLine("显示槽位越界。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var entry = agent + DebugMappingOffset + displaySlot * DebugMappingStride;
+        var invSlot = *(uint*)entry;
+        var itemId = ((ushort*)entry)[2];
+        builder.AppendLine($"显示槽位 {displaySlot}: inventorySlot={invSlot} itemId={itemId}");
+        if (itemId == 0)
+        {
+            builder.AppendLine("该槽位为空。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var actionId = itemId is >= 76 and <= 104
+            ? 46959u + itemId - 76u
+            : 0u;
+        builder.AppendLine($"推导 ActionId={actionId}");
+        if (actionId == 0)
+        {
+            builder.AppendLine("当前道具不在 Action 映射范围内。");
+            return builder.ToString().TrimEnd();
+        }
+
+        if (actionManager->AnimationLock > 0f)
+        {
+            builder.AppendLine();
+            builder.AppendLine($"当前动画锁={actionManager->AnimationLock:0.###}，UseAction 会被动作锁吞掉。请等锁归零后再运行。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var self = player == null ? null : (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address;
+        var selfTargetId = player?.GameObjectId ?? 0;
+
+        var statusAction = actionManager->GetActionStatus(ActionType.Action, actionId, selfTargetId);
+        builder.AppendLine($"GetActionStatus(ActionType.Action, {actionId}, selfTarget) = {statusAction}");
+        var statusNoTarget = actionManager->GetActionStatus(ActionType.Action, actionId, 0);
+        builder.AppendLine($"GetActionStatus(ActionType.Action, {actionId}, 0) = {statusNoTarget}");
+        builder.AppendLine($"CanUseActionOnTarget = {(self == null ? "self null" : FFXIVClientStructs.FFXIV.Client.Game.ActionManager.CanUseActionOnTarget(actionId, self).ToString())}");
+        builder.AppendLine($"GetActionInRangeOrLoS = {(self == null ? "self null" : FFXIVClientStructs.FFXIV.Client.Game.ActionManager.GetActionInRangeOrLoS(actionId, self, self).ToString())}");
+        builder.AppendLine();
+
+        foreach (var (label, targetCandidate) in new (string, ulong)[]
+                 {
+                     ("targetId=self", selfTargetId),
+                     ("targetId=0", 0),
+                 })
+        {
+            if (actionManager->AnimationLock > 0f)
+            {
+                builder.AppendLine($"[{label}] 跳过：动画锁={actionManager->AnimationLock:0.###}");
+                continue;
+            }
+
+            var hpBefore = player?.CurrentHp ?? 0;
+            var invBefore = *(ushort*)((byte*)director + DebugInventoryOffset + invSlot * DebugInventoryStride);
+            var lockBefore = actionManager->AnimationLock;
+            var used = actionManager->UseAction(ActionType.Action, actionId, targetCandidate);
+            builder.AppendLine($"[{label}] UseAction 返回={used}；锁 {lockBefore:0.###}→{actionManager->AnimationLock:0.###}；HP {hpBefore}→{player?.CurrentHp ?? 0}；背包 {invBefore}→{*(ushort*)((byte*)director + DebugInventoryOffset + invSlot * DebugInventoryStride)}");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string TestExecuteSlotById(int hotbarId, int maxSlotId)
+    {
+        var builder = new StringBuilder()
+            .AppendLine("类型: ExecuteSlotById 测试")
+            .AppendLine("模式: 对指定热键栏用 hotbarId/slotId 执行（会使用道具！）")
+            .AppendLine($"热键栏={hotbarId} 槽位 0~{maxSlotId}")
+            .AppendLine();
+
+        var hotbar = RaptureHotbarModule.Instance();
+        var actionManager = ActionManager.Instance();
+        var eventFramework = EventFramework.Instance();
+        var director = eventFramework == null ? null : eventFramework->GetInstanceContentDirector();
+        if (hotbar == null || actionManager == null || director == null || (int)director->InstanceContentType != 22)
+        {
+            builder.AppendLine("前置条件不满足：需在斗兽塔内。");
+            return builder.ToString().TrimEnd();
+        }
+
+        if (actionManager->AnimationLock > 0f)
+        {
+            builder.AppendLine($"当前动画锁={actionManager->AnimationLock:0.###}，请等锁归零后再运行。");
+            return builder.ToString().TrimEnd();
+        }
+
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var hpBefore = player?.CurrentHp ?? 0;
+        var lockBefore = actionManager->AnimationLock;
+        builder.AppendLine($"执行前 HP={hpBefore} 锁={lockBefore:0.###}");
+        builder.AppendLine();
+
+        for (var slotId = 0; slotId <= maxSlotId; slotId++)
+        {
+            if (actionManager->AnimationLock > 0f)
+            {
+                builder.AppendLine($"  槽{slotId}: 跳过（动画锁 {actionManager->AnimationLock:0.###}）");
+                continue;
+            }
+
+            var currentPointer = hotbar->GetSlotById((uint)hotbarId, (uint)slotId);
+            if (currentPointer == null)
+            {
+                builder.AppendLine($"  槽{slotId}: GetSlotById 返回 null");
+                continue;
+            }
+
+            var commandType = *(byte*)((byte*)currentPointer + 0xC7);
+            var commandId = *(uint*)((byte*)currentPointer + 0xB8);
+            var hpSlotBefore = player?.CurrentHp ?? 0;
+            var lockSlotBefore = actionManager->AnimationLock;
+            var result = hotbar->ExecuteSlotById((uint)hotbarId, (uint)slotId);
+            builder.AppendLine($"  槽{slotId}: Type={commandType} Id={commandId} ExecuteSlotById返回={result}"
+                + $" 锁{lockSlotBefore:0.###}→{actionManager->AnimationLock:0.###} HP {hpSlotBefore}→{player?.CurrentHp ?? 0}");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine($"执行后 HP={player?.CurrentHp ?? 0} 锁={actionManager->AnimationLock:0.###}");
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string ScanHotbarsForCrucibleItems()
+    {
+        var builder = new StringBuilder()
+            .AppendLine("类型: 热键栏奇弈道具扫描")
+            .AppendLine("模式: 只读，遍历 RaptureHotbarModule 的 0~17 号热键栏全部槽位")
+            .AppendLine("目标: 找出奇弈道具挂靠的 CommandType / 热键栏位置")
+            .AppendLine();
+
+        var hotbar = RaptureHotbarModule.Instance();
+        if (hotbar == null)
+        {
+            builder.AppendLine("RaptureHotbarModule 不可用。");
+            return builder.ToString().TrimEnd();
+        }
+
+        const int hotbarStride = 0xE8 * 16;
+        const int hotbarBase = 0xA0;
+        const int hotbarCount = 18;
+        const int slotStride = 0xE8;
+        var found = 0;
+        builder.AppendLine("扫描非空槽位（CommandType!=0 且 CommandId!=0）:");
+        for (var hotbarId = 0; hotbarId < hotbarCount; hotbarId++)
+        {
+            var hotbarPtr = (byte*)hotbar + hotbarBase + hotbarId * hotbarStride;
+            for (var slotId = 0; slotId < 16; slotId++)
+            {
+                var slotPtr = hotbarPtr + slotId * slotStride;
+                var commandId = *(uint*)(slotPtr + 0xB8);
+                var commandType = *(byte*)(slotPtr + 0xC7);
+                var apparentActionId = *(uint*)(slotPtr + 0xC0);
+                var apparentSlotType = *(byte*)(slotPtr + 0xC9);
+                if (commandId == 0 && commandType == 0)
+                {
+                    continue;
+                }
+
+                var isCrucible = commandId is >= 76 and <= 143;
+                if (!isCrucible)
+                {
+                    continue;
+                }
+
+                found++;
+                builder.AppendLine($"  热键栏{hotbarId} 槽{slotId}: CommandType={commandType} CommandId={commandId}"
+                    + $" | ApparentType={apparentSlotType} ApparentId={apparentActionId}");
+            }
+        }
+
+        if (found == 0)
+        {
+            builder.AppendLine("  未在任何热键栏中找到 CommandId 为 76~143 的槽位。");
+            builder.AppendLine();
+            builder.AppendLine("结论: 奇弈道具栏不挂靠在 RaptureHotbarModule，应改用 ActionManager.UseAction 执行。");
+        }
+        else
+        {
+            builder.AppendLine();
+            builder.AppendLine($"共找到 {found} 个疑似奇弈道具槽位。");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("附: 所有非空槽位的 CommandType 分布（用于确认新枚举）:");
+        var typeCounts = new Dictionary<byte, int>();
+        for (var hotbarId = 0; hotbarId < hotbarCount; hotbarId++)
+        {
+            var hotbarPtr = (byte*)hotbar + hotbarBase + hotbarId * hotbarStride;
+            for (var slotId = 0; slotId < 16; slotId++)
+            {
+                var slotPtr = hotbarPtr + slotId * slotStride;
+                var commandId = *(uint*)(slotPtr + 0xB8);
+                var commandType = *(byte*)(slotPtr + 0xC7);
+                if (commandId == 0 && commandType == 0)
+                {
+                    continue;
+                }
+
+                typeCounts[commandType] = typeCounts.GetValueOrDefault(commandType) + 1;
+            }
+        }
+
+        foreach (var kv in typeCounts.OrderBy(k => k.Key))
+        {
+            builder.AppendLine($"  CommandType={kv.Key}: {kv.Value} 个非空槽位");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("CommandType=36 的所有槽位（奇弈道具栏候选）:");
+        for (var hotbarId = 0; hotbarId < hotbarCount; hotbarId++)
+        {
+            var hotbarPtr = (byte*)hotbar + hotbarBase + hotbarId * hotbarStride;
+            for (var slotId = 0; slotId < 16; slotId++)
+            {
+                var slotPtr = hotbarPtr + slotId * slotStride;
+                var commandType = *(byte*)(slotPtr + 0xC7);
+                if (commandType != 36)
+                {
+                    continue;
+                }
+
+                var commandId = *(uint*)(slotPtr + 0xB8);
+                var apparentType = *(byte*)(slotPtr + 0xC9);
+                var apparentId = *(uint*)(slotPtr + 0xC0);
+                var iconId = *(uint*)(slotPtr + 0xD0);
+                builder.AppendLine($"  热键栏{hotbarId} 槽{slotId}: CommandId={commandId} ApparentType={apparentType} ApparentId={apparentId} IconId={iconId}");
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public unsafe string TestExecuteRealCrucibleSlot(int hotbarId, int slotId)
+    {
+        var builder = new StringBuilder()
+            .AppendLine("类型: 执行游戏真实奇弈道具热键栏槽位")
+            .AppendLine("模式: 直接用 RaptureHotbarModule 内已存在的 HotbarSlot 指针调用 ExecuteSlot（会使用道具！）")
+            .AppendLine($"热键栏={hotbarId} 槽位={slotId}")
+            .AppendLine();
+
+        var hotbar = RaptureHotbarModule.Instance();
+        var actionManager = ActionManager.Instance();
+        if (hotbar == null || actionManager == null)
+        {
+            builder.AppendLine("RaptureHotbarModule 或 ActionManager 不可用。");
+            return builder.ToString().TrimEnd();
+        }
+
+        if (actionManager->AnimationLock > 0f)
+        {
+            builder.AppendLine($"当前动画锁={actionManager->AnimationLock:0.###}，请等锁归零后再运行。");
+            return builder.ToString().TrimEnd();
+        }
+
+        const int hotbarStride = 0xE8 * 16;
+        const int hotbarBase = 0xA0;
+        const int slotStride = 0xE8;
+        var slotPtr = (RaptureHotbarModule.HotbarSlot*)((byte*)hotbar + hotbarBase + hotbarId * hotbarStride + slotId * slotStride);
+        builder.AppendLine($"真实槽位: CommandType={*(byte*)((byte*)slotPtr + 0xC7)} CommandId={*(uint*)((byte*)slotPtr + 0xB8)}"
+            + $" ApparentType={*(byte*)((byte*)slotPtr + 0xC9)} ApparentId={*(uint*)((byte*)slotPtr + 0xC0)}"
+            + $" IconId={*(uint*)((byte*)slotPtr + 0xD0)}");
+
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var hpBefore = player?.CurrentHp ?? 0;
+        var lockBefore = actionManager->AnimationLock;
+
+        var result = hotbar->ExecuteSlot(slotPtr);
+        builder.AppendLine($"ExecuteSlot(真实指针) 返回={result}；锁 {lockBefore:0.###}→{actionManager->AnimationLock:0.###}；HP {hpBefore}→{player?.CurrentHp ?? 0}");
+        builder.AppendLine("说明: 若锁变化则真实槽位执行有效，可改用 GetSlotById 获取指针后 ExecuteSlot。");
         return builder.ToString().TrimEnd();
     }
 

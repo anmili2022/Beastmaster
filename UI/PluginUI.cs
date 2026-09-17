@@ -120,6 +120,7 @@ public sealed class PluginUI
         RefreshGaugeSnapshot();
         DrawAutoCaptureOverlay();
         DrawPetPartyOverlay();
+        DriveUseActionScan();
         if (!isMainWindowOpen)
         {
             return;
@@ -2982,6 +2983,11 @@ public sealed class PluginUI
                 configuration.AutoRecoveryItemHpThreshold = Math.Clamp(recoveryThreshold, 1f, 100f);
                 configuration.Save();
             }
+            DrawCompactSettingCheckbox(
+                "恢复药默语提示",
+                "低血量自动吃药成功或失败时发送默语提示；成功以请求后自身血量上升为准。默认关闭。",
+                nameof(configuration.AutoRecoveryItemDiagnosticsEnabled),
+                configuration.AutoRecoveryItemDiagnosticsEnabled);
         }
 
         if (compactFinalStrike)
@@ -3120,6 +3126,7 @@ public sealed class PluginUI
             case nameof(configuration.AutoReleaseEnabled): configuration.AutoReleaseEnabled = !configuration.AutoReleaseEnabled; break;
             case nameof(configuration.AutoSafeShieldEnabled): configuration.AutoSafeShieldEnabled = !configuration.AutoSafeShieldEnabled; break;
             case nameof(configuration.AutoRecoveryItemEnabled): configuration.AutoRecoveryItemEnabled = !configuration.AutoRecoveryItemEnabled; break;
+            case nameof(configuration.AutoRecoveryItemDiagnosticsEnabled): configuration.AutoRecoveryItemDiagnosticsEnabled = !configuration.AutoRecoveryItemDiagnosticsEnabled; break;
         }
         configuration.Save();
     }
@@ -3630,6 +3637,9 @@ public sealed class PluginUI
                 case nameof(configuration.AutoBeastSkillEnabled):
                     configuration.AutoBeastSkillEnabled = value;
                     break;
+                case nameof(configuration.AutoRecoveryItemDiagnosticsEnabled):
+                    configuration.AutoRecoveryItemDiagnosticsEnabled = value;
+                    break;
             }
             configuration.Save();
         }
@@ -3683,7 +3693,7 @@ public sealed class PluginUI
         DrawDebugActionRow(
             "##DebugProjectDataType",
             ref debugProjectDataType,
-            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0魔兽恢复药扫描\0内容道具容器扫描\0XBM界面扫描\0XBM道具结构\0奇弈道具列表\0魔兽等级经验结构\0斗兽结算等级经验\0魔兽编队结构\0驯兽师养成数据模块\0",
+            "驯养魔兽之人任务\0当前所有任务状态\0驯兽师任务链\0图鉴副本 ID\0自动捕获 ID\0魔兽属性映射\0魔兽图鉴客户端数据\0推荐装备物品 ID\0魔兽恢复药扫描\0内容道具容器扫描\0XBM界面扫描\0XBM道具结构\0奇弈道具列表\0魔兽等级经验结构\0斗兽结算等级经验\0魔兽编队结构\0驯兽师养成数据模块\0奇弈道具ExecuteSlot测试(会使用0号槽)\0奇弈道具UseAction测试(会使用0号槽)\0热键栏奇弈道具扫描\0执行真实奇弈热键栏槽(会使用道具)\0ExecuteSlotById测试(热键栏2,会使用道具)\0",
             "读取##DebugProjectData",
             RunDebugProjectData);
 
@@ -3696,6 +3706,9 @@ public sealed class PluginUI
             "读取##DebugCurrentState",
             RunDebugCurrentState);
 
+        ImGui.Spacing();
+        DrawUseActionScanRow();
+
         ImGui.Separator();
         if (ImGui.BeginChild("DebugResult", Vector2.Zero, true))
         {
@@ -3703,6 +3716,35 @@ public sealed class PluginUI
         }
 
         ImGui.EndChild();
+    }
+
+    private void DrawUseActionScanRow()
+    {
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - 72f));
+        ImGui.Text($"ActionId 扫描: {(debugDataService.IsUseActionScanActive ? "进行中..." : "空闲")}");
+        ImGui.SameLine();
+        if (ImGui.Button("扫描0号槽 ActionId 46959~46980##StartUseActionScan"))
+        {
+            SetDebugResult(debugDataService.StartUseActionScan(0, 46959, 46980));
+        }
+
+        if (ImGui.Button(debugDataService.IsCaptureActive
+                ? "停止奇弈点击捕获##StopCapture"
+                : "开始奇弈点击捕获##StartCapture"))
+        {
+            SetDebugResult(debugDataService.IsCaptureActive
+                ? debugDataService.StopCrucibleClickCapture()
+                : debugDataService.StartCrucibleClickCapture());
+        }
+    }
+
+    private void DriveUseActionScan()
+    {
+        debugDataService.UpdateUseActionScan();
+        while (debugDataService.TryTakeUseActionScanLog(out var log))
+        {
+            DalamudApi.ChatGui.Print($"[驯兽师恢复药诊断] {log}");
+        }
     }
 
     private static void DrawDebugActionRow(
@@ -3757,6 +3799,11 @@ public sealed class PluginUI
             14 => debugDataService.GetBeastResultProgressionProbe(),
             15 => debugDataService.GetPetPartyStructureProbe(),
             16 => debugDataService.GetXbmModuleProbe(),
+            17 => debugDataService.TestCrucibleExecuteSlot(0),
+            18 => debugDataService.TestCrucibleUseAction(0),
+            19 => debugDataService.ScanHotbarsForCrucibleItems(),
+            20 => debugDataService.TestExecuteRealCrucibleSlot(2, 0),
+            21 => debugDataService.TestExecuteSlotById(2, 11),
             _ => "未知项目资料类型。",
         });
     }

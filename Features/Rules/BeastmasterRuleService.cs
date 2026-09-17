@@ -124,6 +124,13 @@ public sealed class BeastmasterRuleService
             rule.ActionId,
             targetId,
             BeastmasterRuleActions.UsesAdjustedActionId(rule.ActionId));
+        if (BeastmasterFinalStrikeLock.IsBlocked(availability.ActionId, now))
+        {
+            Fail(ruleSet, rule, ruleIndex, matchReason,
+                $"最后一击保护中，还剩 {BeastmasterFinalStrikeLock.RemainingSeconds(now):0.#} 秒",
+                now);
+            return false;
+        }
         if (!availability.CanUse)
         {
             Fail(ruleSet, rule, ruleIndex, matchReason, availability.Reason, now);
@@ -149,6 +156,11 @@ public sealed class BeastmasterRuleService
         {
             Fail(ruleSet, rule, ruleIndex, matchReason, "技能请求失败", now);
             return false;
+        }
+
+        if (availability.ActionId == 44891)
+        {
+            BeastmasterFinalStrikeLock.Record(now);
         }
 
         var message = $"规则集“{ruleSet.Name}”第 {ruleIndex + 1} 条“{rule.Name}”命中：{matchReason}；已请求 {availability.ActionName}（{availability.ActionId}）";
@@ -187,7 +199,7 @@ public sealed class BeastmasterRuleService
         }
 
         var itemName = BeastmasterRuleActions.GetCrucibleItemName(itemId);
-        var message = $"规则集“{ruleSet.Name}”第 {ruleIndex + 1} 条“{rule.Name}”命中：{matchReason}；已使用 {itemName}（{itemId}）";
+        var message = $"规则集“{ruleSet.Name}”第 {ruleIndex + 1} 条“{rule.Name}”命中：{matchReason}；已请求 {itemName}（{itemId}）";
         RecordDiagnostic(message);
         lastFailureMessages.Remove($"{ruleSet.Name}|{rule.Name}");
         if (configuration.RuleDiagnosticsEnabled

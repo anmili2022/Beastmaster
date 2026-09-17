@@ -361,6 +361,12 @@ public sealed class BeastmasterSequenceService
         }
 
         var targetId = requiresTarget ? target!.GameObjectId : 0UL;
+        if (BeastmasterFinalStrikeLock.IsBlocked(adjustedActionId, now))
+        {
+            Status = $"等待最后一击保护结束：{step.Label}";
+            nextAttemptUtc = now.AddMilliseconds(100);
+            return true;
+        }
         if (adjustedActionId == 0
             || actionManager->GetActionStatus(ActionType.Action, adjustedActionId, targetId) != 0
             || !actionManager->UseAction(ActionType.Action, adjustedActionId, targetId))
@@ -376,6 +382,10 @@ public sealed class BeastmasterSequenceService
         }
 
         nextAttemptUtc = now.AddMilliseconds(250);
+        if (adjustedActionId == FinalStrikeActionId)
+        {
+            BeastmasterFinalStrikeLock.Record(now);
+        }
         if (baseActionId is WhistleOneActionId or WhistleTwoActionId or WhistleThreeActionId)
         {
             pendingWhistle = baseActionId == WhistleOneActionId ? (byte)1 : baseActionId == WhistleTwoActionId ? (byte)2 : (byte)3;
@@ -498,6 +508,13 @@ public sealed class BeastmasterSequenceService
             return true;
         }
 
+        if (BeastmasterFinalStrikeLock.IsBlocked(adjustedActionId, now))
+        {
+            combatStepFailure = $"最后一击保护中，还剩 {BeastmasterFinalStrikeLock.RemainingSeconds(now):0.#} 秒";
+            nextAttemptUtc = now.AddMilliseconds(100);
+            return true;
+        }
+
         if (BeastmasterActionHelper.TryGetActionLevel(adjustedActionId, out var requiredLevel)
             && DalamudApi.ObjectTable.LocalPlayer is { } player
             && player.Level < requiredLevel)
@@ -535,6 +552,11 @@ public sealed class BeastmasterSequenceService
             combatStepFailure = $"UseAction 返回 false（Action {baseActionId}→{adjustedActionId}，Status=0，目标 {targetId}）";
             nextAttemptUtc = now.AddMilliseconds(100);
             return true;
+        }
+
+        if (adjustedActionId == FinalStrikeActionId)
+        {
+            BeastmasterFinalStrikeLock.Record(now);
         }
 
         PrintChat($"已请求战斗技能：{combatStep + 1}/{sequence.CombatSteps.Count} {step.Label}");

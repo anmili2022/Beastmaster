@@ -53,7 +53,7 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         var debugDataService = new BeastmasterDebugDataService(countdownService);
         navigationService = new BeastmasterNavigationService(pluginInterface, Configuration);
         catalogChatTracker = new BeastmasterCatalogChatTracker(Configuration, progressService);
-        autoCaptureService = new BeastmasterAutoCaptureService(Configuration, sequenceService, ruleService);
+        autoCaptureService = new BeastmasterAutoCaptureService(Configuration, sequenceService, ruleService, crucibleItemService);
         ui = new PluginUI(Configuration, progressService, questService, navigationService, debugDataService, autoCaptureService, catalogSyncService, achievementSyncService, notebookSyncService, sequenceService, ruleService, petPartyService);
 
         DalamudApi.Commands.AddHandler(CommandName, new CommandInfo(OnCommand)

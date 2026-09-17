@@ -12,7 +12,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private DateTime lastSaveFailureUtc = DateTime.MinValue;
 
-    public int Version { get; set; } = 44;
+    public int Version { get; set; } = 45;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -58,6 +58,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public bool AutoBeastSkillEnabled { get; set; }
     public bool AutoRecoveryItemEnabled { get; set; }
     public float AutoRecoveryItemHpThreshold { get; set; } = 30f;
+    public bool AutoRecoveryItemDiagnosticsEnabled { get; set; }
     public bool WhistleRotationEnabled { get; set; }
     public bool ForceCaptureEnabled { get; set; }
     public bool ActiveAttackEnabled { get; set; }
@@ -479,6 +480,13 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         {
             AutoReleaseBossOnly = false;
             Version = 44;
+            Save();
+        }
+
+        if (Version < 45)
+        {
+            AutoRecoveryItemDiagnosticsEnabled = false;
+            Version = 45;
             Save();
         }
 

@@ -24,21 +24,47 @@ public sealed unsafe class BeastmasterCrucibleItemService
     private const ushort FirstRecoveryItemId = 76;
     private static readonly TimeSpan RecoveryUseInterval = TimeSpan.FromSeconds(2);
     private static readonly ushort[] RecoveryItemPriority = [140, 79, 78, 77, 76, 82, 81, 80, 135];
-    private static readonly ushort[] FangItemPriority = [133, 132, 131, 130, 129, 128];
+    private static readonly ushort[] FangItemPriority = [134, 133, 132, 131, 130, 129, 128, 139];
 
-    private DateTime nextUseUtc = DateTime.MinValue;
+    private DateTime nextRequestUtc = DateTime.MinValue;
+    private DateTime nextRecoveryUseUtc = DateTime.MinValue;
+    private PendingRequest? pendingRequest;
+    private ushort dispatchedRecoveryItemId;
+    private ushort failedRecoveryItemId;
+    private string recoveryDispatchFailure = string.Empty;
     private delegate* unmanaged<byte*, uint, byte, uint> getUseStatus;
     private delegate* unmanaged<byte*, void> refreshMapping;
     private bool nativeInitializationAttempted;
+    private nint mappingDirector;
+    private uint mappingTerritory;
+    private readonly ushort[] mappingInventoryItemIds = new ushort[SlotCount];
+    private readonly List<string> executionProbes = [];
 
     public string LastFailureReason { get; private set; } = "未知原因";
+
+    public string LastDiagnostic { get; private set; } = string.Empty;
+
+    public bool TryTakeExecutionProbe(out string probe)
+    {
+        if (executionProbes.Count == 0)
+        {
+            probe = string.Empty;
+            return false;
+        }
+
+        probe = executionProbes[0];
+        executionProbes.RemoveAt(0);
+        return true;
+    }
 
     public bool TryUseBestRecoveryItem(IBattleChara player, IBattleChara? target, DateTime now, out ushort itemId)
     {
         itemId = 0;
-        if (now < nextUseUtc || player.IsDead || player.CurrentHp == 0)
+        if (pendingRequest != null || now < nextRecoveryUseUtc || player.IsDead || player.CurrentHp == 0)
         {
-            LastFailureReason = now < nextUseUtc ? "奇弈道具冷却中" : "自身已死亡或 HP 为 0";
+            LastFailureReason = pendingRequest != null ? "已有奇弈道具请求等待执行"
+                : now < nextRecoveryUseUtc ? "恢复道具防重复等待中"
+                : "自身已死亡或 HP 为 0";
             return false;
         }
 
@@ -59,12 +85,10 @@ public sealed unsafe class BeastmasterCrucibleItemService
         var director = eventFramework == null
             ? null
             : eventFramework->GetInstanceContentDirector();
-        if (actionManager == null || actionManager->AnimationLock > 0f
-            || hotbar == null || targets == null || agent == null || director == null
+        if (actionManager == null || hotbar == null || targets == null || agent == null || director == null
             || (int)director->InstanceContentType != 22)
         {
             LastFailureReason = actionManager == null ? "ActionManager 不可用"
-                : actionManager->AnimationLock > 0f ? "动作锁中"
                 : hotbar == null ? "RaptureHotbarModule 不可用"
                 : targets == null ? "TargetSystem 不可用"
                 : agent == null ? "奇弈道具 Agent 不可用"
@@ -74,45 +98,37 @@ public sealed unsafe class BeastmasterCrucibleItemService
         }
 
         var self = (GameObject*)player.Address;
-        refreshMapping(agent);
+        EnsureMapping(agent, director);
+        var diagnostic = new System.Text.StringBuilder();
         foreach (var recoveryItemId in RecoveryItemPriority)
         {
             var displaySlot = FindDisplaySlot(agent, (byte*)director, recoveryItemId, out var inventorySlot);
-            if (displaySlot < 0
-                || getUseStatus((byte*)director, inventorySlot, 0) != 0
-                || !CanUseOnSelf(recoveryItemId, self))
+            var useStatus = displaySlot < 0 ? uint.MaxValue : getUseStatus((byte*)director, inventorySlot, 0);
+            var canUse = displaySlot >= 0 && useStatus == 0 && CanUseOnTarget(recoveryItemId, self, self);
+            diagnostic.Append(
+                $"\n  {recoveryItemId}:槽位={displaySlot}/背包={inventorySlot}/状态码={useStatus}/可用于自身={(canUse ? "是" : "否")}");
+            if (displaySlot < 0 || useStatus != 0 || !canUse)
             {
                 LastFailureReason = displaySlot < 0 ? $"找不到恢复药 {recoveryItemId} 的奇弈道具槽位"
-                    : getUseStatus((byte*)director, inventorySlot, 0) != 0 ? $"恢复药 {recoveryItemId} 的游戏状态不可用"
+                    : useStatus != 0 ? $"恢复药 {recoveryItemId} 的游戏状态不可用（状态码 {useStatus}）"
                     : $"恢复药 {recoveryItemId} 当前无法对自身使用";
                 continue;
             }
 
-            var slot = new HotbarSlot
-            {
-                CommandType = (HotbarSlotType)36,
-                CommandId = (uint)displaySlot,
-            };
-            var previousSoftTarget = targets->SoftTarget;
-            try
-            {
-                targets->SoftTarget = self;
-                hotbar->ExecuteSlot(&slot);
-                itemId = recoveryItemId;
-                nextUseUtc = now.Add(RecoveryUseInterval);
-                return true;
-            }
-            finally
-            {
-                targets->SoftTarget = previousSoftTarget;
-            }
+            pendingRequest = new PendingRequest(recoveryItemId, player.GameObjectId, true, now.AddSeconds(2), displaySlot, inventorySlot);
+            itemId = recoveryItemId;
+            LastDiagnostic = $"选择阶段：{diagnostic}";
+            return true;
         }
+
+        LastDiagnostic = $"选择阶段（均不可用）：{diagnostic}";
 
         var recoveryFailure = "恢复药套装 140、恢复药 79/78/77/76、药粉 82/81/80 和吸血药 135 均不存在或当前不可用";
         if (target != null && !target.IsDead && target.CurrentHp > 0)
         {
             if (TryUseCrucibleItemOnTarget(134, target, now))
             {
+                pendingRequest = pendingRequest! with { IsRecovery = true };
                 itemId = 134;
                 return true;
             }
@@ -125,7 +141,120 @@ public sealed unsafe class BeastmasterCrucibleItemService
         return false;
     }
 
-    public void Reset() => nextUseUtc = DateTime.MinValue;
+    public void Reset()
+    {
+        nextRequestUtc = DateTime.MinValue;
+        nextRecoveryUseUtc = DateTime.MinValue;
+        pendingRequest = null;
+        dispatchedRecoveryItemId = 0;
+        failedRecoveryItemId = 0;
+        recoveryDispatchFailure = string.Empty;
+        mappingDirector = 0;
+        mappingTerritory = 0;
+        Array.Clear(mappingInventoryItemIds);
+        scheduledProbe = default;
+        executionProbes.Clear();
+        LastDiagnostic = string.Empty;
+    }
+
+    public bool TryTakeDispatchedRecoveryItem(out ushort itemId)
+    {
+        itemId = dispatchedRecoveryItemId;
+        dispatchedRecoveryItemId = 0;
+        return itemId != 0;
+    }
+
+    public bool TryTakeRecoveryDispatchFailure(out ushort itemId, out string reason)
+    {
+        itemId = failedRecoveryItemId;
+        reason = recoveryDispatchFailure;
+        failedRecoveryItemId = 0;
+        recoveryDispatchFailure = string.Empty;
+        return itemId != 0;
+    }
+
+    public void ProcessPendingRequest(DateTime now)
+    {
+        if (pendingRequest is not { } request)
+        {
+            return;
+        }
+
+        if (now >= request.DeadlineUtc)
+        {
+            LastFailureReason = $"待执行请求超时，最后原因：{LastFailureReason}{LastDiagnostic}";
+            if (request.IsRecovery)
+            {
+                failedRecoveryItemId = request.ItemId;
+                recoveryDispatchFailure = LastFailureReason;
+            }
+            pendingRequest = null;
+            return;
+        }
+
+        var target = DalamudApi.ObjectTable
+            .OfType<IBattleChara>()
+            .FirstOrDefault(actor => actor.GameObjectId == request.TargetId);
+        if (target == null)
+        {
+            LastFailureReason = "待执行请求的目标暂时不可用";
+            return;
+        }
+
+        if (!TryVerifyRequestSlot(request, out var verifiedDisplaySlot, out var verifiedInventorySlot, out var slotFailure))
+        {
+            LastFailureReason = slotFailure;
+            if (request.IsRecovery)
+            {
+                failedRecoveryItemId = request.ItemId;
+                recoveryDispatchFailure = LastFailureReason;
+            }
+
+            pendingRequest = null;
+            return;
+        }
+
+        if (!TryDispatchCrucibleItem(request.ItemId, verifiedDisplaySlot, verifiedInventorySlot, target, now))
+        {
+            return;
+        }
+
+        pendingRequest = null;
+        if (request.IsRecovery)
+        {
+            dispatchedRecoveryItemId = request.ItemId;
+            nextRecoveryUseUtc = now.Add(RecoveryUseInterval);
+        }
+    }
+
+    private bool TryVerifyRequestSlot(PendingRequest request, out int displaySlot, out uint inventorySlot, out string failure)
+    {
+        displaySlot = -1;
+        inventorySlot = SlotCount;
+        failure = string.Empty;
+        if (!InitializeNative())
+        {
+            failure = "奇弈道具原生签名不可用";
+            return false;
+        }
+
+        var agentModule = AgentModule.Instance();
+        var agent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)497);
+        var eventFramework = EventFramework.Instance();
+        var director = eventFramework == null ? null : eventFramework->GetInstanceContentDirector();
+        if (agent == null || director == null || (int)director->InstanceContentType != 22)
+        {
+            failure = agent == null ? "奇弈道具 Agent 不可用"
+                : director == null ? "副本内容控制器不可用"
+                : $"当前副本类型不是斗兽塔（InstanceContentType={(int)director->InstanceContentType}）";
+            return false;
+        }
+
+        displaySlot = FindDisplaySlot(agent, (byte*)director, request.ItemId, out inventorySlot);
+        failure = $"请求槽位与当前映射不一致（请求：显示槽位={request.DisplaySlot}/背包={request.InventorySlot}，"
+            + $"当前：显示槽位={displaySlot}/背包={inventorySlot}，道具={request.ItemId}）";
+        return displaySlot == request.DisplaySlot && inventorySlot == request.InventorySlot;
+    }
 
     public bool TryUseCrucibleItemOnTarget(BeastmasterCrucibleItemType itemType, IBattleChara player, IBattleChara? target, DateTime now, out ushort itemId)
     {
@@ -191,9 +320,11 @@ public sealed unsafe class BeastmasterCrucibleItemService
 
     public unsafe bool TryUseCrucibleItemOnTarget(ushort itemId, IBattleChara target, DateTime now)
     {
-        if (now < nextUseUtc || target.IsDead || target.CurrentHp == 0)
+        if (pendingRequest != null || now < nextRequestUtc || target.IsDead || target.CurrentHp == 0)
         {
-            LastFailureReason = now < nextUseUtc ? "奇弈道具冷却中" : "目标已死亡或 HP 为 0";
+            LastFailureReason = pendingRequest != null ? "已有奇弈道具请求等待执行"
+                : now < nextRequestUtc ? "奇弈道具请求节流中"
+                : "目标已死亡或 HP 为 0";
             return false;
         }
 
@@ -214,12 +345,10 @@ public sealed unsafe class BeastmasterCrucibleItemService
         var director = eventFramework == null
             ? null
             : eventFramework->GetInstanceContentDirector();
-        if (actionManager == null || actionManager->AnimationLock > 0f
-            || hotbar == null || targets == null || agent == null || director == null
+        if (actionManager == null || hotbar == null || targets == null || agent == null || director == null
             || (int)director->InstanceContentType != 22)
         {
             LastFailureReason = actionManager == null ? "ActionManager 不可用"
-                : actionManager->AnimationLock > 0f ? "动作锁中"
                 : hotbar == null ? "RaptureHotbarModule 不可用"
                 : targets == null ? "TargetSystem 不可用"
                 : agent == null ? "奇弈道具 Agent 不可用"
@@ -229,32 +358,194 @@ public sealed unsafe class BeastmasterCrucibleItemService
         }
 
         var targetObj = (GameObject*)target.Address;
-        refreshMapping(agent);
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var self = player == null ? null : (GameObject*)player.Address;
+        EnsureMapping(agent, director);
         var displaySlot = FindDisplaySlot(agent, (byte*)director, itemId, out var inventorySlot);
+        var useStatus = displaySlot < 0 ? uint.MaxValue : getUseStatus((byte*)director, inventorySlot, 0);
         if (displaySlot < 0
-            || getUseStatus((byte*)director, inventorySlot, 0) != 0)
+            || useStatus != 0
+            || !CanUseOnTarget(itemId, self, targetObj))
         {
             LastFailureReason = displaySlot < 0 ? $"找不到奇弈道具 {itemId} 的槽位"
-                : $"奇弈道具 {itemId} 的游戏状态不可用";
+                : useStatus != 0
+                    ? $"奇弈道具 {itemId} 的游戏状态不可用（状态码 {useStatus}）"
+                    : $"奇弈道具 {itemId} 当前无法对目标使用（目标、射程或视线不满足）";
             return false;
         }
 
-        var slot = new HotbarSlot
+        pendingRequest = new PendingRequest(itemId, target.GameObjectId, false, now.AddSeconds(2), displaySlot, inventorySlot);
+        return true;
+    }
+
+    private unsafe bool TryDispatchCrucibleItem(ushort itemId, int displaySlot, uint inventorySlot, IBattleChara target, DateTime now)
+    {
+        var actionManager = ActionManager.Instance();
+        if (actionManager == null || actionManager->AnimationLock > 0f)
         {
-            CommandType = (HotbarSlotType)36,
-            CommandId = (uint)displaySlot,
-        };
-        var previousSoftTarget = targets->SoftTarget;
-        try
-        {
-            targets->SoftTarget = targetObj;
-            hotbar->ExecuteSlot(&slot);
-            nextUseUtc = now.AddSeconds(2);
-            return true;
+            LastFailureReason = actionManager == null ? "ActionManager 不可用" : "动作锁中";
+            return false;
         }
-        finally
+
+        var hotbar = RaptureHotbarModule.Instance();
+        var targets = TargetSystem.Instance();
+        var agentModule = AgentModule.Instance();
+        var agent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)497);
+        var eventFramework = EventFramework.Instance();
+        var director = eventFramework == null ? null : eventFramework->GetInstanceContentDirector();
+        if (hotbar == null || targets == null || agent == null || director == null
+            || (int)director->InstanceContentType != 22)
         {
-            targets->SoftTarget = previousSoftTarget;
+            LastFailureReason = hotbar == null ? "RaptureHotbarModule 不可用"
+                : targets == null ? "TargetSystem 不可用"
+                : agent == null ? "奇弈道具 Agent 不可用"
+                : director == null ? "副本内容控制器不可用"
+                : $"当前副本类型不是斗兽塔（InstanceContentType={(int)director->InstanceContentType}）";
+            return false;
+        }
+
+        EnsureMapping(agent, director);
+        var useStatus = displaySlot < 0 ? uint.MaxValue : getUseStatus((byte*)director, inventorySlot, 0);
+        LastDiagnostic = $"分派阶段：道具={itemId}/槽位={displaySlot}/背包={inventorySlot}/状态码={useStatus}/AnimationLock={actionManager->AnimationLock:0.###}";
+        if (displaySlot < 0 || useStatus != 0)
+        {
+            LastFailureReason = displaySlot < 0
+                ? $"找不到奇弈道具 {itemId} 的槽位"
+                : $"奇弈道具 {itemId} 的游戏状态不可用（状态码 {useStatus}）";
+            return false;
+        }
+
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        var self = player == null ? null : (GameObject*)player.Address;
+        var targetObj = (GameObject*)target.Address;
+        if (!CanUseOnTarget(itemId, self, targetObj))
+        {
+            LastFailureReason = $"奇弈道具 {itemId} 当前无法对目标使用（目标、射程或视线不满足）";
+            LastDiagnostic += "/可用于目标=否";
+            return false;
+        }
+
+        LastDiagnostic += "/可用于目标=是";
+        if (!TryFindCrucibleHotbarSlot(displaySlot, out var hotbarId, out var hotbarSlotId))
+        {
+            LastFailureReason = $"找不到奇弈道具显示槽位 {displaySlot} 对应的热键栏槽位";
+            LastDiagnostic += "/热键栏槽位=未找到";
+            return false;
+        }
+
+        var inventoryBefore = *(ushort*)((byte*)director + InventoryOffset + inventorySlot * InventoryStride);
+        var lockBefore = actionManager->AnimationLock;
+        var hpBefore = self == null ? 0u : ((IBattleChara)target).CurrentHp;
+        var executed = hotbar->ExecuteSlotById((uint)hotbarId, (uint)hotbarSlotId);
+        var inventoryAfter = *(ushort*)((byte*)director + InventoryOffset + inventorySlot * InventoryStride);
+        executionProbes.Add(
+            $"[执行探针 {DateTime.Now:HH:mm:ss.fff}] 道具{itemId} 显示槽={displaySlot} 热键栏={hotbarId}/{hotbarSlotId}：ExecuteSlotById={executed} "
+            + $"执行前 AnimationLock={lockBefore:0.###}/背包itemId={inventoryBefore}/HP={hpBefore} → "
+            + $"执行后 AnimationLock={actionManager->AnimationLock:0.###}/背包itemId={inventoryAfter}");
+        if (executed == 0)
+        {
+            LastFailureReason = $"奇弈道具 {itemId} 的 ExecuteSlotById({hotbarId},{hotbarSlotId}) 返回 0";
+            return false;
+        }
+
+        scheduleExecutionProbe(itemId, displaySlot, inventorySlot, now);
+        nextRequestUtc = now.AddMilliseconds(500);
+        return true;
+    }
+
+    private (ushort ItemId, int DisplaySlot, uint InventorySlot, DateTime DeadlineUtc) scheduledProbe;
+
+    private void scheduleExecutionProbe(ushort itemId, int displaySlot, uint inventorySlot, DateTime now)
+        => scheduledProbe = (itemId, displaySlot, inventorySlot, now.AddSeconds(1));
+
+    public void UpdateExecutionProbe(DateTime now)
+    {
+        if (scheduledProbe.DeadlineUtc == DateTime.MinValue)
+        {
+            return;
+        }
+
+        if (now >= scheduledProbe.DeadlineUtc)
+        {
+            var (itemId, displaySlot, inventorySlot, _) = scheduledProbe;
+            scheduledProbe = default;
+            var agentModule = AgentModule.Instance();
+            var agent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)497);
+            var eventFramework = EventFramework.Instance();
+            var director = eventFramework == null ? null : eventFramework->GetInstanceContentDirector();
+            var actionManager = ActionManager.Instance();
+            var player = DalamudApi.ObjectTable.LocalPlayer;
+            if (agent != null && director != null && actionManager != null && (int)director->InstanceContentType == 22)
+            {
+                var inventoryItemId = *(ushort*)((byte*)director + InventoryOffset + inventorySlot * InventoryStride);
+                var foundDisplaySlot = FindDisplaySlot(agent, (byte*)director, itemId, out _);
+                executionProbes.Add(
+                    $"[执行探针 +1s] 道具{itemId}：AnimationLock={actionManager->AnimationLock:0.###}"
+                    + $"/原背包槽itemId={inventoryItemId}/当前查找显示槽位={foundDisplaySlot}"
+                    + $"/HP={(player == null ? 0 : player.CurrentHp)}");
+            }
+            else
+            {
+                executionProbes.Add($"[执行探针 +1s] 道具{itemId}：上下文不可用");
+            }
+        }
+    }
+
+    private bool TryFindCrucibleHotbarSlot(int displaySlot, out int hotbarId, out int slotId)
+    {
+        hotbarId = -1;
+        slotId = -1;
+        var hotbar = RaptureHotbarModule.Instance();
+        if (hotbar == null)
+        {
+            return false;
+        }
+
+        const int hotbarStride = 0xE8 * 16;
+        const int hotbarBase = 0xA0;
+        const int hotbarCount = 18;
+        const int slotStride = 0xE8;
+        for (var candidateHotbar = 0; candidateHotbar < hotbarCount; candidateHotbar++)
+        {
+            var hotbarPtr = (byte*)hotbar + hotbarBase + candidateHotbar * hotbarStride;
+            for (var candidateSlot = 0; candidateSlot < 16; candidateSlot++)
+            {
+                var slotPtr = hotbarPtr + candidateSlot * slotStride;
+                var commandType = *(byte*)(slotPtr + 0xC7);
+                var commandId = *(uint*)(slotPtr + 0xB8);
+                if (commandType == 36 && commandId == (uint)displaySlot)
+                {
+                    hotbarId = candidateHotbar;
+                    slotId = candidateSlot;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private void EnsureMapping(byte* agent, InstanceContentDirector* director)
+    {
+        var directorAddress = (nint)director;
+        var territory = DalamudApi.ClientState.TerritoryType;
+        var changed = mappingDirector != directorAddress || mappingTerritory != territory;
+        for (var inventorySlot = 0; inventorySlot < SlotCount; inventorySlot++)
+        {
+            var itemId = *(ushort*)((byte*)director + InventoryOffset + inventorySlot * InventoryStride);
+            if (mappingInventoryItemIds[inventorySlot] != itemId)
+            {
+                changed = true;
+            }
+
+            mappingInventoryItemIds[inventorySlot] = itemId;
+        }
+
+        mappingDirector = directorAddress;
+        mappingTerritory = territory;
+        if (changed)
+        {
+            refreshMapping(agent);
         }
     }
 
@@ -276,6 +567,32 @@ public sealed unsafe class BeastmasterCrucibleItemService
         }
 
         return -1;
+    }
+
+    public string DescribeRecoveryItemSlot(ushort itemId)
+    {
+        if (!InitializeNative())
+        {
+            return "原生签名不可用";
+        }
+
+        var agentModule = AgentModule.Instance();
+        var agent = agentModule == null ? null : (byte*)agentModule->GetAgentByInternalId((AgentId)497);
+        var eventFramework = EventFramework.Instance();
+        var director = eventFramework == null ? null : eventFramework->GetInstanceContentDirector();
+        if (agent == null || director == null || (int)director->InstanceContentType != 22)
+        {
+            return "非斗兽塔上下文";
+        }
+
+        var displaySlot = FindDisplaySlot(agent, (byte*)director, itemId, out var inventorySlot);
+        if (displaySlot < 0)
+        {
+            return $"道具{itemId}已不在任何显示槽位（已消耗或重排）";
+        }
+
+        var inventoryItemId = *(ushort*)((byte*)director + InventoryOffset + inventorySlot * InventoryStride);
+        return $"道具{itemId}仍在显示槽位{displaySlot}/背包{inventorySlot}（背包内 itemId={inventoryItemId}），未被消耗";
     }
 
     private bool InitializeNative()
@@ -303,10 +620,24 @@ public sealed unsafe class BeastmasterCrucibleItemService
         return true;
     }
 
-    private static bool CanUseOnSelf(ushort itemId, GameObject* self)
+    private static bool CanUseOnTarget(ushort itemId, GameObject* self, GameObject* target)
     {
-        var actionId = FirstRecoveryActionId + itemId - FirstRecoveryItemId;
-        return ActionManager.CanUseActionOnTarget(actionId, self)
-            && ActionManager.GetActionInRangeOrLoS(actionId, self, self) == 0;
+        var actionId = GetTargetCheckAction(itemId);
+        return actionId != 0
+            && self != null
+            && target != null
+            && ActionManager.CanUseActionOnTarget(actionId, target)
+            && ActionManager.GetActionInRangeOrLoS(actionId, self, target) == 0;
     }
+
+    private static uint GetTargetCheckAction(ushort itemId)
+        => itemId switch
+        {
+            >= 76 and <= 104 => FirstRecoveryActionId + itemId - FirstRecoveryItemId,
+            >= 105 and <= 113 => 46987u + (uint)(itemId - 104) / 2u,
+            >= 114 and <= 141 => 46992u + itemId - 114u,
+            _ => 0,
+        };
+
+    private sealed record PendingRequest(ushort ItemId, ulong TargetId, bool IsRecovery, DateTime DeadlineUtc, int DisplaySlot, uint InventorySlot);
 }
