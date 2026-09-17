@@ -3253,9 +3253,8 @@ public sealed class PluginUI
             SetFinalStrikeEnabled(enabledProperty, enabled);
         }
 
-        ImGui.SameLine();
         threshold = Math.Clamp(threshold, 1f, 100f);
-        ImGui.SetNextItemWidth(100f);
+        SetThresholdInputLayout();
         if (ImGui.InputFloat($"##{thresholdProperty}", ref threshold, 1f, 5f, "%.0f%%"))
         {
             SetFinalStrikeThreshold(thresholdProperty, threshold);
@@ -3313,9 +3312,8 @@ public sealed class PluginUI
             SetReleaseEnabled(enabledProperty, enabled);
         }
 
-        ImGui.SameLine();
         threshold = Math.Clamp(threshold, 1f, 100f);
-        ImGui.SetNextItemWidth(100f);
+        SetThresholdInputLayout();
         if (ImGui.InputFloat($"##{thresholdProperty}", ref threshold, 1f, 5f, "%.0f%%"))
         {
             SetReleaseThreshold(thresholdProperty, threshold);
@@ -3324,6 +3322,28 @@ public sealed class PluginUI
         {
             ImGui.SetTooltip($"目标血量小于等于该阈值时允许 {label}释放，范围 1%~100%。");
         }
+    }
+
+    private static void SetThresholdInputLayout()
+    {
+        var style = ImGui.GetStyle();
+        var inputWidth = Math.Max(
+            100f,
+            ImGui.CalcTextSize("100%").X
+            + style.FramePadding.X * 2f
+            + ImGui.GetFrameHeight() * 2f
+            + style.ItemInnerSpacing.X * 2f);
+        var sameLineWidth = ImGui.GetWindowPos().X
+            + ImGui.GetWindowContentRegionMax().X
+            - ImGui.GetItemRectMax().X
+            - style.ItemSpacing.X;
+
+        if (sameLineWidth >= inputWidth)
+        {
+            ImGui.SameLine();
+        }
+
+        ImGui.SetNextItemWidth(inputWidth);
     }
 
     private void SetReleaseEnabled(string propertyName, bool value)
