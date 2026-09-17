@@ -363,7 +363,7 @@ public sealed class BeastmasterSequenceService
         var targetId = requiresTarget ? target!.GameObjectId : 0UL;
         if (BeastmasterFinalStrikeLock.IsBlocked(adjustedActionId, now))
         {
-            Status = $"等待最后一击保护结束：{step.Label}";
+            Status = $"{BeastmasterFinalStrikeLock.GetBlockReason(adjustedActionId, now)}：{step.Label}";
             nextAttemptUtc = now.AddMilliseconds(100);
             return true;
         }
@@ -382,9 +382,13 @@ public sealed class BeastmasterSequenceService
         }
 
         nextAttemptUtc = now.AddMilliseconds(250);
-        if (adjustedActionId == FinalStrikeActionId)
+        if (baseActionId == ReleaseActionId)
         {
-            BeastmasterFinalStrikeLock.Record(now);
+            BeastmasterFinalStrikeLock.RecordRelease(now);
+        }
+        else if (adjustedActionId == FinalStrikeActionId)
+        {
+            BeastmasterFinalStrikeLock.RecordFinalStrike(now);
         }
         if (baseActionId is WhistleOneActionId or WhistleTwoActionId or WhistleThreeActionId)
         {
@@ -510,7 +514,7 @@ public sealed class BeastmasterSequenceService
 
         if (BeastmasterFinalStrikeLock.IsBlocked(adjustedActionId, now))
         {
-            combatStepFailure = $"最后一击保护中，还剩 {BeastmasterFinalStrikeLock.RemainingSeconds(now):0.#} 秒";
+            combatStepFailure = BeastmasterFinalStrikeLock.GetBlockReason(adjustedActionId, now);
             nextAttemptUtc = now.AddMilliseconds(100);
             return true;
         }
@@ -554,9 +558,13 @@ public sealed class BeastmasterSequenceService
             return true;
         }
 
-        if (adjustedActionId == FinalStrikeActionId)
+        if (baseActionId == ReleaseActionId)
         {
-            BeastmasterFinalStrikeLock.Record(now);
+            BeastmasterFinalStrikeLock.RecordRelease(now);
+        }
+        else if (adjustedActionId == FinalStrikeActionId)
+        {
+            BeastmasterFinalStrikeLock.RecordFinalStrike(now);
         }
 
         PrintChat($"已请求战斗技能：{combatStep + 1}/{sequence.CombatSteps.Count} {step.Label}");

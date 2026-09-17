@@ -319,7 +319,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         var actionId = BeastmasterUltimateActionId;
         if (BeastmasterFinalStrikeLock.IsBlocked(actionId, DateTime.UtcNow))
         {
-            ManualActionStatus = $"最后一击保护中，还剩 {BeastmasterFinalStrikeLock.RemainingSeconds(DateTime.UtcNow):0.#} 秒";
+            ManualActionStatus = BeastmasterFinalStrikeLock.GetBlockReason(actionId, DateTime.UtcNow);
             return false;
         }
         if (!BeastmasterActionHelper.IsPlayerInActionRange(
@@ -416,6 +416,14 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         crucibleItemService.UpdateExecutionProbe(now);
         FlushExecutionProbes();
         HandleRecoveryItemDispatch(now);
+        ruleService.ProcessCrucibleDispatchResults(now);
+        if (crucibleItemService.HasPendingRequest)
+        {
+            StatusText = "等待奇弈道具执行";
+            NextActionName = "奇弈道具";
+            NextActionReason = "等待动作锁解除或热键栏槽位同步";
+            return;
+        }
 
         if (!configuration.WhistleRotationEnabled
             && (whistleRotationStage >= 0 || whistleRotationWaitingForCooldown))
@@ -1104,8 +1112,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             && TryGetFinalStrikeSettings(gauge.WhistleIndex, out var finalEnabled, out var finalThreshold))
         {
             var finalStatus = actionManager->GetActionStatus(ActionType.Action, FinalStrikeActionId, target.GameObjectId);
-            Add("最后一击", finalEnabled && gauge.SummonMaxHp > 0 && gauge.SummonHpPercent <= finalThreshold && finalStatus == 0,
-                !finalEnabled ? "当前笛位关闭" : gauge.SummonMaxHp == 0 ? "无宝宝" : gauge.SummonHpPercent > finalThreshold ? $"宝宝血量 {gauge.SummonHpPercent:0.#}%/{finalThreshold:0.#}%" : finalStatus == 0 ? "" : $"状态码 {finalStatus}");
+            var releaseBlocked = BeastmasterFinalStrikeLock.IsBlocked(FinalStrikeActionId, now);
+            Add("最后一击", finalEnabled && gauge.SummonMaxHp > 0 && gauge.SummonHpPercent <= finalThreshold && finalStatus == 0 && !releaseBlocked,
+                !finalEnabled ? "当前笛位关闭"
+                    : gauge.SummonMaxHp == 0 ? "无宝宝"
+                    : gauge.SummonHpPercent > finalThreshold ? $"宝宝血量 {gauge.SummonHpPercent:0.#}%/{finalThreshold:0.#}%"
+                    : releaseBlocked ? BeastmasterFinalStrikeLock.GetBlockReason(FinalStrikeActionId, now)
+                    : finalStatus == 0 ? "" : $"状态码 {finalStatus}");
         }
 
         if (configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
@@ -1386,7 +1399,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         if (BeastmasterFinalStrikeLock.IsBlocked(actionId, now))
         {
             NextActionName = GetActionName(actionId);
-            NextActionReason = $"最后一击保护中，还剩 {BeastmasterFinalStrikeLock.RemainingSeconds(now):0.#} 秒";
+            NextActionReason = BeastmasterFinalStrikeLock.GetBlockReason(actionId, now);
             return false;
         }
         if (!BeastmasterActionHelper.IsPlayerInActionRange(
@@ -1552,6 +1565,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         ReportAutoOutputSuccess(NextActionName, availability.ActionId);
+        BeastmasterFinalStrikeLock.RecordRelease(now);
         nextReleaseAttemptUtc = now.AddMilliseconds(500);
         nextActionUtc = now.AddMilliseconds(700);
         return true;
@@ -1597,6 +1611,15 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (now < nextFinalStrikeAttemptUtc)
         {
+            return false;
+        }
+
+        if (BeastmasterFinalStrikeLock.IsBlocked(FinalStrikeActionId, now))
+        {
+            NextActionName = GetActionName(FinalStrikeActionId);
+            NextActionReason = BeastmasterFinalStrikeLock.GetBlockReason(FinalStrikeActionId, now);
+            ReportAutoOutputDiagnostic(NextActionName, NextActionReason, "release-lock");
+            nextFinalStrikeAttemptUtc = now.AddMilliseconds(250);
             return false;
         }
 
@@ -1674,7 +1697,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         ReportAutoOutputSuccess(NextActionName, FinalStrikeActionId);
-        BeastmasterFinalStrikeLock.Record(now);
+        BeastmasterFinalStrikeLock.RecordFinalStrike(now);
         nextFinalStrikeAttemptUtc = now.AddMilliseconds(700);
         nextActionUtc = now.AddMilliseconds(700);
         return true;
@@ -1935,6 +1958,14 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         StatusText = "兽笛循环连招中...";
+        if (actionId == BeastmasterReleaseBaseActionId)
+        {
+            BeastmasterFinalStrikeLock.RecordRelease(now);
+        }
+        else if (actionId == FinalStrikeActionId)
+        {
+            BeastmasterFinalStrikeLock.RecordFinalStrike(now);
+        }
         whistleRotationNextActionUtc = now.AddMilliseconds(actionId == BeastmasterReleaseBaseActionId ? 700 : 350);
         if (whistleRotationStage == 7)
         {

@@ -146,7 +146,7 @@ public sealed class BeastmasterDebugDataService
 
         captureActive = true;
         captureLog.Clear();
-        captureLog.AppendLine("[奇弈点击捕获] 已启动。请手动点击奇弈道具面板第1格，然后点击停止按钮查看。");
+        captureLog.AppendLine("[奇弈点击捕获] 已启动。请手动点击要分析的奇弈道具格，然后点击停止按钮查看。");
         DalamudApi.AddonLifecycle.RegisterListener(Dalamud.Game.Addon.Lifecycle.AddonEvent.PreReceiveEvent, OnCaptureAddonEvent);
         DalamudApi.AgentLifecycle.RegisterListener(Dalamud.Game.Agent.AgentEvent.PreReceiveEvent, (Dalamud.Game.Agent.AgentId)497, OnCaptureAgentEvent);
         return "捕获已启动，请手动点击奇弈道具格。";

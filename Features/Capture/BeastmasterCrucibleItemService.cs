@@ -6,6 +6,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using HotbarSlot = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureHotbarModule.HotbarSlot;
 using HotbarSlotType = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureHotbarModule.HotbarSlotType;
 
@@ -22,6 +23,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
     private const int InventoryStride = 12;
     private const uint FirstRecoveryActionId = 46959;
     private const ushort FirstRecoveryItemId = 76;
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan RecoveryUseInterval = TimeSpan.FromSeconds(2);
     private static readonly ushort[] RecoveryItemPriority = [140, 79, 78, 77, 76, 82, 81, 80, 135];
     private static readonly ushort[] FangItemPriority = [134, 133, 132, 131, 130, 129, 128, 139];
@@ -29,6 +31,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
     private DateTime nextRequestUtc = DateTime.MinValue;
     private DateTime nextRecoveryUseUtc = DateTime.MinValue;
     private PendingRequest? pendingRequest;
+    private string pendingRequestLastFailure = string.Empty;
     private ushort dispatchedRecoveryItemId;
     private ushort failedRecoveryItemId;
     private string recoveryDispatchFailure = string.Empty;
@@ -39,10 +42,13 @@ public sealed unsafe class BeastmasterCrucibleItemService
     private uint mappingTerritory;
     private readonly ushort[] mappingInventoryItemIds = new ushort[SlotCount];
     private readonly List<string> executionProbes = [];
+    private readonly Queue<RuleDispatchResult> ruleDispatchResults = [];
 
     public string LastFailureReason { get; private set; } = "未知原因";
 
     public string LastDiagnostic { get; private set; } = string.Empty;
+
+    public bool HasPendingRequest => pendingRequest != null;
 
     public bool TryTakeExecutionProbe(out string probe)
     {
@@ -57,7 +63,12 @@ public sealed unsafe class BeastmasterCrucibleItemService
         return true;
     }
 
-    public bool TryUseBestRecoveryItem(IBattleChara player, IBattleChara? target, DateTime now, out ushort itemId)
+    public bool TryUseBestRecoveryItem(
+        IBattleChara player,
+        IBattleChara? target,
+        DateTime now,
+        out ushort itemId,
+        RuleRequestSource? ruleSource = null)
     {
         itemId = 0;
         if (pendingRequest != null || now < nextRecoveryUseUtc || player.IsDead || player.CurrentHp == 0)
@@ -115,7 +126,8 @@ public sealed unsafe class BeastmasterCrucibleItemService
                 continue;
             }
 
-            pendingRequest = new PendingRequest(recoveryItemId, player.GameObjectId, true, now.AddSeconds(2), displaySlot, inventorySlot);
+            pendingRequest = new PendingRequest(recoveryItemId, player.GameObjectId, true, now.Add(RequestTimeout), displaySlot, inventorySlot, ruleSource);
+            pendingRequestLastFailure = "尚未尝试分派";
             itemId = recoveryItemId;
             LastDiagnostic = $"选择阶段：{diagnostic}";
             return true;
@@ -126,7 +138,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
         var recoveryFailure = "恢复药套装 140、恢复药 79/78/77/76、药粉 82/81/80 和吸血药 135 均不存在或当前不可用";
         if (target != null && !target.IsDead && target.CurrentHp > 0)
         {
-            if (TryUseCrucibleItemOnTarget(134, target, now))
+            if (TryUseCrucibleItemOnTarget(134, target, now, ruleSource))
             {
                 pendingRequest = pendingRequest! with { IsRecovery = true };
                 itemId = 134;
@@ -146,6 +158,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
         nextRequestUtc = DateTime.MinValue;
         nextRecoveryUseUtc = DateTime.MinValue;
         pendingRequest = null;
+        pendingRequestLastFailure = string.Empty;
         dispatchedRecoveryItemId = 0;
         failedRecoveryItemId = 0;
         recoveryDispatchFailure = string.Empty;
@@ -154,7 +167,20 @@ public sealed unsafe class BeastmasterCrucibleItemService
         Array.Clear(mappingInventoryItemIds);
         scheduledProbe = default;
         executionProbes.Clear();
+        ruleDispatchResults.Clear();
         LastDiagnostic = string.Empty;
+    }
+
+    public bool TryTakeRuleDispatchResult(out RuleDispatchResult result)
+    {
+        if (ruleDispatchResults.Count == 0)
+        {
+            result = default;
+            return false;
+        }
+
+        result = ruleDispatchResults.Dequeue();
+        return true;
     }
 
     public bool TryTakeDispatchedRecoveryItem(out ushort itemId)
@@ -182,13 +208,15 @@ public sealed unsafe class BeastmasterCrucibleItemService
 
         if (now >= request.DeadlineUtc)
         {
-            LastFailureReason = $"待执行请求超时，最后原因：{LastFailureReason}{LastDiagnostic}";
+            LastFailureReason = $"待执行请求超时，最后原因：{pendingRequestLastFailure}";
+            RecordRuleDispatchResult(request, false, LastFailureReason);
             if (request.IsRecovery)
             {
                 failedRecoveryItemId = request.ItemId;
                 recoveryDispatchFailure = LastFailureReason;
             }
             pendingRequest = null;
+            pendingRequestLastFailure = string.Empty;
             return;
         }
 
@@ -198,12 +226,14 @@ public sealed unsafe class BeastmasterCrucibleItemService
         if (target == null)
         {
             LastFailureReason = "待执行请求的目标暂时不可用";
+            pendingRequestLastFailure = LastFailureReason;
             return;
         }
 
         if (!TryVerifyRequestSlot(request, out var verifiedDisplaySlot, out var verifiedInventorySlot, out var slotFailure))
         {
             LastFailureReason = slotFailure;
+            RecordRuleDispatchResult(request, false, LastFailureReason);
             if (request.IsRecovery)
             {
                 failedRecoveryItemId = request.ItemId;
@@ -211,15 +241,20 @@ public sealed unsafe class BeastmasterCrucibleItemService
             }
 
             pendingRequest = null;
+            pendingRequestLastFailure = string.Empty;
             return;
         }
 
         if (!TryDispatchCrucibleItem(request.ItemId, verifiedDisplaySlot, verifiedInventorySlot, target, now))
         {
+            pendingRequestLastFailure = LastFailureReason;
             return;
         }
 
         pendingRequest = null;
+        pendingRequestLastFailure = string.Empty;
+        RecordRuleDispatchResult(request, true,
+            $"已分派道具 {request.ItemId}（显示槽位 {verifiedDisplaySlot}，背包槽位 {verifiedInventorySlot}）");
         if (request.IsRecovery)
         {
             dispatchedRecoveryItemId = request.ItemId;
@@ -256,17 +291,23 @@ public sealed unsafe class BeastmasterCrucibleItemService
         return displaySlot == request.DisplaySlot && inventorySlot == request.InventorySlot;
     }
 
-    public bool TryUseCrucibleItemOnTarget(BeastmasterCrucibleItemType itemType, IBattleChara player, IBattleChara? target, DateTime now, out ushort itemId)
+    public bool TryUseCrucibleItemOnTarget(
+        BeastmasterCrucibleItemType itemType,
+        IBattleChara player,
+        IBattleChara? target,
+        DateTime now,
+        out ushort itemId,
+        RuleRequestSource? ruleSource = null)
     {
         itemId = 0;
         if (itemType == BeastmasterCrucibleItemType.Recovery)
         {
-            return TryUseBestRecoveryItem(player, target, now, out itemId);
+            return TryUseBestRecoveryItem(player, target, now, out itemId, ruleSource);
         }
 
         if (itemType == BeastmasterCrucibleItemType.VampireFang)
         {
-            if (target != null && TryUseCrucibleItemOnTarget(134, target, now))
+            if (target != null && TryUseCrucibleItemOnTarget(134, target, now, ruleSource))
             {
                 itemId = 134;
                 return true;
@@ -289,7 +330,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
         };
         if (selfItemId != 0)
         {
-            if (TryUseCrucibleItemOnTarget(selfItemId, player, now))
+            if (TryUseCrucibleItemOnTarget(selfItemId, player, now, ruleSource))
             {
                 itemId = selfItemId;
                 return true;
@@ -298,10 +339,16 @@ public sealed unsafe class BeastmasterCrucibleItemService
             return false;
         }
 
+        if (pendingRequest != null)
+        {
+            LastFailureReason = "已有奇弈道具请求等待执行";
+            return false;
+        }
+
         var fangFailures = new List<string>(FangItemPriority.Length);
         foreach (var fangItemId in FangItemPriority)
         {
-            if (target != null && TryUseCrucibleItemOnTarget(fangItemId, target, now))
+            if (target != null && TryUseCrucibleItemOnTarget(fangItemId, target, now, ruleSource))
             {
                 itemId = fangItemId;
                 return true;
@@ -318,7 +365,11 @@ public sealed unsafe class BeastmasterCrucibleItemService
         return false;
     }
 
-    public unsafe bool TryUseCrucibleItemOnTarget(ushort itemId, IBattleChara target, DateTime now)
+    public unsafe bool TryUseCrucibleItemOnTarget(
+        ushort itemId,
+        IBattleChara target,
+        DateTime now,
+        RuleRequestSource? ruleSource = null)
     {
         if (pendingRequest != null || now < nextRequestUtc || target.IsDead || target.CurrentHp == 0)
         {
@@ -374,8 +425,17 @@ public sealed unsafe class BeastmasterCrucibleItemService
             return false;
         }
 
-        pendingRequest = new PendingRequest(itemId, target.GameObjectId, false, now.AddSeconds(2), displaySlot, inventorySlot);
+        pendingRequest = new PendingRequest(itemId, target.GameObjectId, false, now.Add(RequestTimeout), displaySlot, inventorySlot, ruleSource);
+        pendingRequestLastFailure = "尚未尝试分派";
         return true;
+    }
+
+    private void RecordRuleDispatchResult(PendingRequest request, bool success, string detail)
+    {
+        if (request.RuleSource is { } source)
+        {
+            ruleDispatchResults.Enqueue(new RuleDispatchResult(source, request.ItemId, success, detail));
+        }
     }
 
     private unsafe bool TryDispatchCrucibleItem(ushort itemId, int displaySlot, uint inventorySlot, IBattleChara target, DateTime now)
@@ -426,22 +486,31 @@ public sealed unsafe class BeastmasterCrucibleItemService
         }
 
         LastDiagnostic += "/可用于目标=是";
-        if (!TryFindCrucibleHotbarSlot(displaySlot, out var hotbarId, out var hotbarSlotId))
-        {
-            LastFailureReason = $"找不到奇弈道具显示槽位 {displaySlot} 对应的热键栏槽位";
-            LastDiagnostic += "/热键栏槽位=未找到";
-            return false;
-        }
-
         var inventoryBefore = *(ushort*)((byte*)director + InventoryOffset + inventorySlot * InventoryStride);
         var lockBefore = actionManager->AnimationLock;
         var hpBefore = self == null ? 0u : ((IBattleChara)target).CurrentHp;
         var previousSoftTarget = targets->SoftTarget;
-        byte executed;
+        byte executed = 0;
+        var dispatchPath = string.Empty;
         try
         {
             targets->SoftTarget = targetObj;
-            executed = hotbar->ExecuteSlotById((uint)hotbarId, (uint)hotbarSlotId);
+            if (TryFindCrucibleHotbarSlot(displaySlot, out var hotbarId, out var hotbarSlotId))
+            {
+                executed = hotbar->ExecuteSlotById((uint)hotbarId, (uint)hotbarSlotId);
+                dispatchPath = $"ExecuteSlotById={executed} 热键栏={hotbarId}/{hotbarSlotId}";
+            }
+            else if (TryDispatchViaAgent(agent, displaySlot))
+            {
+                executed = 1;
+                dispatchPath = "Agent497 ReceiveEvent 后备路径";
+            }
+            else
+            {
+                LastFailureReason = $"找不到奇弈道具显示槽位 {displaySlot} 对应的热键栏槽位，Agent 后备分派也失败";
+                LastDiagnostic += "/热键栏槽位=未找到/Agent后备=失败";
+                return false;
+            }
         }
         finally
         {
@@ -450,17 +519,41 @@ public sealed unsafe class BeastmasterCrucibleItemService
 
         var inventoryAfter = *(ushort*)((byte*)director + InventoryOffset + inventorySlot * InventoryStride);
         executionProbes.Add(
-            $"[执行探针 {DateTime.Now:HH:mm:ss.fff}] 道具{itemId} 目标={target.GameObjectId} 显示槽={displaySlot} 热键栏={hotbarId}/{hotbarSlotId}：ExecuteSlotById={executed} "
+            $"[执行探针 {DateTime.Now:HH:mm:ss.fff}] 道具{itemId} 目标={target.GameObjectId} 显示槽={displaySlot}：{dispatchPath} "
             + $"执行前 AnimationLock={lockBefore:0.###}/背包itemId={inventoryBefore}/HP={hpBefore} → "
             + $"执行后 AnimationLock={actionManager->AnimationLock:0.###}/背包itemId={inventoryAfter}");
         if (executed == 0)
         {
-            LastFailureReason = $"奇弈道具 {itemId} 的 ExecuteSlotById({hotbarId},{hotbarSlotId}) 返回 0";
+            LastFailureReason = $"奇弈道具 {itemId} 的热键栏分派返回 0";
             return false;
         }
 
         scheduleExecutionProbe(itemId, displaySlot, inventorySlot, now);
         nextRequestUtc = now.AddMilliseconds(500);
+        return true;
+    }
+
+    private static bool TryDispatchViaAgent(byte* agent, int displaySlot)
+    {
+        if (agent == null || displaySlot is < 0 or >= SlotCount)
+        {
+            return false;
+        }
+
+        var selectArgs = stackalloc AtkValue[3];
+        selectArgs[0] = new AtkValue { Type = (AtkValueType)3, Int = 6 };
+        selectArgs[1] = new AtkValue { Type = (AtkValueType)3, Int = displaySlot };
+        selectArgs[2] = new AtkValue { Type = AtkValueType.Undefined };
+        var result = new AtkValue();
+        ((AgentInterface*)agent)->ReceiveEvent(&result, selectArgs, 3, 0);
+
+        var useArgs = stackalloc AtkValue[5];
+        useArgs[0] = new AtkValue { Type = (AtkValueType)3, Int = 0 };
+        useArgs[1] = new AtkValue { Type = (AtkValueType)3, Int = 0 };
+        useArgs[2] = new AtkValue { Type = (AtkValueType)5, UInt = 0 };
+        useArgs[3] = new AtkValue { Type = AtkValueType.Undefined };
+        useArgs[4] = new AtkValue { Type = AtkValueType.Undefined };
+        ((AgentInterface*)agent)->ReceiveEvent(&result, useArgs, 5, 3);
         return true;
     }
 
@@ -512,19 +605,15 @@ public sealed unsafe class BeastmasterCrucibleItemService
             return false;
         }
 
-        const int hotbarStride = 0xE8 * 16;
-        const int hotbarBase = 0xA0;
         const int hotbarCount = 18;
-        const int slotStride = 0xE8;
         for (var candidateHotbar = 0; candidateHotbar < hotbarCount; candidateHotbar++)
         {
-            var hotbarPtr = (byte*)hotbar + hotbarBase + candidateHotbar * hotbarStride;
             for (var candidateSlot = 0; candidateSlot < 16; candidateSlot++)
             {
-                var slotPtr = hotbarPtr + candidateSlot * slotStride;
-                var commandType = *(byte*)(slotPtr + 0xC7);
-                var commandId = *(uint*)(slotPtr + 0xB8);
-                if (commandType == 36 && commandId == (uint)displaySlot)
+                var slot = hotbar->GetSlotById((uint)candidateHotbar, (uint)candidateSlot);
+                if (slot != null
+                    && (byte)slot->CommandType == 36
+                    && slot->CommandId == (uint)displaySlot)
                 {
                     hotbarId = candidateHotbar;
                     slotId = candidateSlot;
@@ -650,5 +739,16 @@ public sealed unsafe class BeastmasterCrucibleItemService
             _ => 0,
         };
 
-    private sealed record PendingRequest(ushort ItemId, ulong TargetId, bool IsRecovery, DateTime DeadlineUtc, int DisplaySlot, uint InventorySlot);
+    public readonly record struct RuleRequestSource(string RuleSetName, string RuleName, int RuleIndex);
+
+    public readonly record struct RuleDispatchResult(RuleRequestSource Source, ushort ItemId, bool Success, string Detail);
+
+    private sealed record PendingRequest(
+        ushort ItemId,
+        ulong TargetId,
+        bool IsRecovery,
+        DateTime DeadlineUtc,
+        int DisplaySlot,
+        uint InventorySlot,
+        RuleRequestSource? RuleSource);
 }

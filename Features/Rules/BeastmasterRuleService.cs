@@ -127,7 +127,7 @@ public sealed class BeastmasterRuleService
         if (BeastmasterFinalStrikeLock.IsBlocked(availability.ActionId, now))
         {
             Fail(ruleSet, rule, ruleIndex, matchReason,
-                $"最后一击保护中，还剩 {BeastmasterFinalStrikeLock.RemainingSeconds(now):0.#} 秒",
+                BeastmasterFinalStrikeLock.GetBlockReason(availability.ActionId, now),
                 now);
             return false;
         }
@@ -158,9 +158,13 @@ public sealed class BeastmasterRuleService
             return false;
         }
 
-        if (availability.ActionId == 44891)
+        if (rule.ActionId == 44890)
         {
-            BeastmasterFinalStrikeLock.Record(now);
+            BeastmasterFinalStrikeLock.RecordRelease(now);
+        }
+        else if (availability.ActionId == 44891)
+        {
+            BeastmasterFinalStrikeLock.RecordFinalStrike(now);
         }
 
         var message = $"规则集“{ruleSet.Name}”第 {ruleIndex + 1} 条“{rule.Name}”命中：{matchReason}；已请求 {availability.ActionName}（{availability.ActionId}）";
@@ -191,8 +195,12 @@ public sealed class BeastmasterRuleService
         }
 
         var player = DalamudApi.ObjectTable.LocalPlayer as IBattleChara;
+        var requestSource = new BeastmasterCrucibleItemService.RuleRequestSource(
+            ruleSet.Name,
+            rule.Name,
+            ruleIndex);
         if (player == null || !crucibleItemService.TryUseCrucibleItemOnTarget(
-                rule.CrucibleItemType, player, target, now, out var itemId))
+                rule.CrucibleItemType, player, target, now, out var itemId, requestSource))
         {
             Fail(ruleSet, rule, ruleIndex, matchReason, crucibleItemService.LastFailureReason, now);
             return false;
@@ -208,6 +216,35 @@ public sealed class BeastmasterRuleService
             PrintChat($"{ruleSet.Name}|{rule.Name}|成功", message, now, TimeSpan.FromSeconds(2));
         }
         return true;
+    }
+
+    public void ProcessCrucibleDispatchResults(DateTime now)
+    {
+        while (crucibleItemService.TryTakeRuleDispatchResult(out var result))
+        {
+            var source = result.Source;
+            var ruleSet = configuration.RuleSets.FirstOrDefault(candidate => candidate.Name == source.RuleSetName);
+            var diagnosticMode = ruleSet?.DiagnosticMode ?? BeastmasterRuleDiagnosticMode.Failures;
+            var ruleKey = $"{source.RuleSetName}|{source.RuleName}";
+            var itemName = BeastmasterRuleActions.GetCrucibleItemName(result.ItemId);
+            var message = result.Success
+                ? $"规则集“{source.RuleSetName}”第 {source.RuleIndex + 1} 条“{source.RuleName}”异步分派成功：{itemName}（{result.ItemId}）；{result.Detail}"
+                : $"规则集“{source.RuleSetName}”第 {source.RuleIndex + 1} 条“{source.RuleName}”异步分派失败：{itemName}（{result.ItemId}）；{result.Detail}";
+            RecordDiagnostic(message);
+
+            if (result.Success)
+            {
+                lastFailureMessages.Remove(ruleKey);
+                if (configuration.RuleDiagnosticsEnabled && diagnosticMode == BeastmasterRuleDiagnosticMode.Full)
+                {
+                    PrintChat($"{ruleKey}|异步成功", message, now, TimeSpan.FromSeconds(2));
+                }
+            }
+            else if (configuration.RuleDiagnosticsEnabled && diagnosticMode != BeastmasterRuleDiagnosticMode.Off)
+            {
+                PrintFailureChat($"{ruleKey}|异步失败", result.Detail, message);
+            }
+        }
     }
 
     private void Fail(
