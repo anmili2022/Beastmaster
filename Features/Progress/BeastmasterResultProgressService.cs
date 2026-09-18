@@ -6,7 +6,7 @@ namespace Beastmaster;
 public sealed unsafe class BeastmasterResultProgressService : IDisposable
 {
     private const string AddonName = "XBMResult";
-    private const int SlotCount = 10;
+    private const int MaximumSlotCount = 15;
     private const int IconStartIndex = 73;
     private const int ExperienceAfterStartIndex = 105;
     private const int LevelAfterStartIndex = 137;
@@ -40,7 +40,7 @@ public sealed unsafe class BeastmasterResultProgressService : IDisposable
             var characterKey = progressService.CurrentCharacterKey;
             var addon = (AtkUnitBase*)DalamudApi.GameGui.GetAddonByName(AddonName, 1).Address;
             if (characterKey.Length == 0 || addon == null || !addon->IsVisible || addon->AtkValues == null
-                || addon->AtkValuesCount <= LevelAfterStartIndex + SlotCount - 1)
+                || addon->AtkValuesCount <= LevelAfterStartIndex)
             {
                 pendingSnapshot = string.Empty;
                 pendingSince = 0;
@@ -48,7 +48,14 @@ public sealed unsafe class BeastmasterResultProgressService : IDisposable
             }
 
             var updates = new Dictionary<int, (int Level, int Experience, int ExperienceRequired)>();
-            for (var slot = 0; slot < SlotCount; slot++)
+            var slotCount = Math.Min(
+                MaximumSlotCount,
+                Math.Min(
+                    addon->AtkValuesCount - IconStartIndex,
+                    Math.Min(
+                        addon->AtkValuesCount - ExperienceAfterStartIndex,
+                        addon->AtkValuesCount - LevelAfterStartIndex)));
+            for (var slot = 0; slot < slotCount; slot++)
             {
                 var icon = ReadNumber(addon->AtkValues[IconStartIndex + slot]);
                 var level = ReadNumber(addon->AtkValues[LevelAfterStartIndex + slot]);

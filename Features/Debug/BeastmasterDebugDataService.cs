@@ -718,6 +718,11 @@ public sealed class BeastmasterDebugDataService
     public unsafe string GetBeastResultProgressionProbe()
     {
         const int agentDumpSize = 0x1000;
+        const int maximumSlots = 15;
+        const int iconStartIndex = 73;
+        const int experienceAfterStartIndex = 105;
+        const int levelAfterStartIndex = 137;
+        const uint iconBase = 242000;
         var builder = new StringBuilder()
             .AppendLine("类型: 斗兽结算等级经验")
             .AppendLine("模式: 只读，不触发回调，不退出结算页，不写入内存")
@@ -740,6 +745,24 @@ public sealed class BeastmasterDebugDataService
         for (var index = 0; index < result->AtkValuesCount; index++)
         {
             builder.AppendLine($"  ResultValue[{index}]: {FormatAtkValue(result->AtkValues[index])}");
+        }
+
+        builder.AppendLine().AppendLine("结算成员解析（最多 15 位）:");
+        var slotCount = Math.Min(
+            maximumSlots,
+            Math.Min(
+                result->AtkValuesCount - iconStartIndex,
+                Math.Min(
+                    result->AtkValuesCount - experienceAfterStartIndex,
+                    result->AtkValuesCount - levelAfterStartIndex)));
+        for (var slot = 0; slot < slotCount; slot++)
+        {
+            var icon = ReadDebugNumber(result->AtkValues[iconStartIndex + slot]);
+            var experience = ReadDebugNumber(result->AtkValues[experienceAfterStartIndex + slot]);
+            var level = ReadDebugNumber(result->AtkValues[levelAfterStartIndex + slot]);
+            builder.AppendLine(icon is > iconBase and <= iconBase + 50
+                ? $"  位置 {slot + 1:00}: 图鉴 {icon - iconBase:00} | 兽级 {level} | 经验 {experience}/100 | Icon={icon}"
+                : $"  位置 {slot + 1:00}: 空或无效 | Level={level} | Exp={experience} | Icon={icon}");
         }
 
         var agentModule = AgentModule.Instance();

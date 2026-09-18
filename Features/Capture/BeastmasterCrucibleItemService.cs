@@ -30,6 +30,8 @@ public sealed unsafe class BeastmasterCrucibleItemService
 
     private DateTime nextRequestUtc = DateTime.MinValue;
     private DateTime nextRecoveryUseUtc = DateTime.MinValue;
+    private DateTime itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
+    private DateTime itemDetailCleanupDeadlineUtc = DateTime.MinValue;
     private PendingRequest? pendingRequest;
     private string pendingRequestLastFailure = string.Empty;
     private ushort dispatchedRecoveryItemId;
@@ -157,6 +159,8 @@ public sealed unsafe class BeastmasterCrucibleItemService
     {
         nextRequestUtc = DateTime.MinValue;
         nextRecoveryUseUtc = DateTime.MinValue;
+        itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
+        itemDetailCleanupDeadlineUtc = DateTime.MinValue;
         pendingRequest = null;
         pendingRequestLastFailure = string.Empty;
         dispatchedRecoveryItemId = 0;
@@ -201,6 +205,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
 
     public void ProcessPendingRequest(DateTime now)
     {
+        UpdateItemDetailCleanup(now);
         if (pendingRequest is not { } request)
         {
             return;
@@ -500,7 +505,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
                 executed = hotbar->ExecuteSlotById((uint)hotbarId, (uint)hotbarSlotId);
                 dispatchPath = $"ExecuteSlotById={executed} 热键栏={hotbarId}/{hotbarSlotId}";
             }
-            else if (TryDispatchViaAgent(agent, displaySlot))
+            else if (TryDispatchViaAgent(agent, displaySlot, now))
             {
                 executed = 1;
                 dispatchPath = "Agent497 ReceiveEvent 后备路径";
@@ -533,12 +538,18 @@ public sealed unsafe class BeastmasterCrucibleItemService
         return true;
     }
 
-    private static bool TryDispatchViaAgent(byte* agent, int displaySlot)
+    private bool TryDispatchViaAgent(byte* agent, int displaySlot, DateTime now)
     {
         if (agent == null || displaySlot is < 0 or >= SlotCount)
         {
             return false;
         }
+
+        var agentModule = AgentModule.Instance();
+        var itemDetail = agentModule == null
+            ? null
+            : agentModule->GetAgentByInternalId((AgentId)498);
+        var itemDetailWasActive = itemDetail != null && ((AgentInterface*)itemDetail)->IsAgentActive();
 
         var selectArgs = stackalloc AtkValue[3];
         selectArgs[0] = new AtkValue { Type = (AtkValueType)3, Int = 6 };
@@ -554,7 +565,39 @@ public sealed unsafe class BeastmasterCrucibleItemService
         useArgs[3] = new AtkValue { Type = AtkValueType.Undefined };
         useArgs[4] = new AtkValue { Type = AtkValueType.Undefined };
         ((AgentInterface*)agent)->ReceiveEvent(&result, useArgs, 5, 3);
+        if (!itemDetailWasActive)
+        {
+            itemDetailCleanupNotBeforeUtc = now.AddMilliseconds(100);
+            itemDetailCleanupDeadlineUtc = now.AddSeconds(1);
+        }
         return true;
+    }
+
+    private void UpdateItemDetailCleanup(DateTime now)
+    {
+        if (itemDetailCleanupDeadlineUtc == DateTime.MinValue
+            || now < itemDetailCleanupNotBeforeUtc)
+        {
+            return;
+        }
+
+        if (now >= itemDetailCleanupDeadlineUtc)
+        {
+            itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
+            itemDetailCleanupDeadlineUtc = DateTime.MinValue;
+            return;
+        }
+
+        var agentModule = AgentModule.Instance();
+        var itemDetail = agentModule == null
+            ? null
+            : agentModule->GetAgentByInternalId((AgentId)498);
+        if (itemDetail != null && ((AgentInterface*)itemDetail)->IsAgentActive())
+        {
+            ((AgentInterface*)itemDetail)->Hide();
+            itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
+            itemDetailCleanupDeadlineUtc = DateTime.MinValue;
+        }
     }
 
     private (ushort ItemId, int DisplaySlot, uint InventorySlot, DateTime DeadlineUtc) scheduledProbe;
