@@ -204,7 +204,9 @@ public sealed class BeastmasterProgressService
                 : null;
     }
 
-    public int UpdateBeastProgress(IReadOnlyDictionary<int, (int Level, int Experience, int ExperienceRequired)> updates)
+    public int UpdateBeastProgress(
+        IReadOnlyDictionary<int, (int Level, int Experience, int ExperienceRequired)> updates,
+        bool saveInBackground = false)
     {
         var characterKey = CurrentCharacterKey;
         if (characterKey.Length == 0 || updates.Count == 0)
@@ -253,7 +255,14 @@ public sealed class BeastmasterProgressService
 
         if (changed > 0)
         {
-            configuration.Save();
+            if (saveInBackground)
+            {
+                configuration.QueueSave();
+            }
+            else
+            {
+                configuration.Save();
+            }
         }
 
         return changed;

@@ -17,6 +17,7 @@ public sealed unsafe class BeastmasterResultProgressService : IDisposable
     private long pendingSince;
     private string pendingSnapshot = string.Empty;
     private string lastAppliedSnapshot = string.Empty;
+    private Dictionary<int, (int Level, int Experience, int ExperienceRequired)> pendingUpdates = [];
 
     public BeastmasterResultProgressService(BeastmasterProgressService progressService)
     {
@@ -25,7 +26,11 @@ public sealed unsafe class BeastmasterResultProgressService : IDisposable
 
     public void Start() => DalamudApi.Framework.Update += OnFrameworkUpdate;
 
-    public void Dispose() => DalamudApi.Framework.Update -= OnFrameworkUpdate;
+    public void Dispose()
+    {
+        DalamudApi.Framework.Update -= OnFrameworkUpdate;
+        ApplyPendingSnapshot("插件卸载前");
+    }
 
     private void OnFrameworkUpdate(IFramework framework)
     {
@@ -39,11 +44,16 @@ public sealed unsafe class BeastmasterResultProgressService : IDisposable
             nextReadAt = Environment.TickCount64 + 250;
             var characterKey = progressService.CurrentCharacterKey;
             var addon = (AtkUnitBase*)DalamudApi.GameGui.GetAddonByName(AddonName, 1).Address;
-            if (characterKey.Length == 0 || addon == null || !addon->IsVisible || addon->AtkValues == null
+            if (characterKey.Length == 0)
+            {
+                ClearPendingSnapshot();
+                return;
+            }
+
+            if (addon == null || !addon->IsVisible || addon->AtkValues == null
                 || addon->AtkValuesCount <= LevelAfterStartIndex)
             {
-                pendingSnapshot = string.Empty;
-                pendingSince = 0;
+                ApplyPendingSnapshot("结算页关闭时");
                 return;
             }
 
@@ -80,6 +90,7 @@ public sealed unsafe class BeastmasterResultProgressService : IDisposable
             if (snapshot != pendingSnapshot)
             {
                 pendingSnapshot = snapshot;
+                pendingUpdates = new Dictionary<int, (int Level, int Experience, int ExperienceRequired)>(updates);
                 pendingSince = Environment.TickCount64;
                 return;
             }
@@ -89,19 +100,43 @@ public sealed unsafe class BeastmasterResultProgressService : IDisposable
                 return;
             }
 
-            lastAppliedSnapshot = snapshot;
-            var changed = progressService.UpdateBeastProgress(updates);
-            if (changed > 0)
-            {
-                DalamudApi.Log.Information("斗兽结算同步了 {Count} 只魔兽的等级与经验。", changed);
-            }
+            ApplyPendingSnapshot("稳定 500ms 后");
         }
         catch (Exception ex)
         {
-            pendingSnapshot = string.Empty;
-            pendingSince = 0;
+            ClearPendingSnapshot();
             DalamudApi.Log.Warning(ex, "读取斗兽结算等级经验失败。");
         }
+    }
+
+    private void ApplyPendingSnapshot(string reason)
+    {
+        if (pendingSnapshot.Length == 0
+            || pendingUpdates.Count == 0
+            || pendingSnapshot == lastAppliedSnapshot)
+        {
+            ClearPendingSnapshot();
+            return;
+        }
+
+        lastAppliedSnapshot = pendingSnapshot;
+        var changed = progressService.UpdateBeastProgress(pendingUpdates, saveInBackground: true);
+        if (changed > 0)
+        {
+            DalamudApi.Log.Information(
+                "斗兽结算在{Reason}同步了 {Count} 只魔兽的等级与经验。",
+                reason,
+                changed);
+        }
+
+        ClearPendingSnapshot();
+    }
+
+    private void ClearPendingSnapshot()
+    {
+        pendingSnapshot = string.Empty;
+        pendingUpdates.Clear();
+        pendingSince = 0;
     }
 
     private static uint ReadNumber(AtkValue value)

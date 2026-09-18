@@ -12,6 +12,15 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private DateTime lastSaveFailureUtc = DateTime.MinValue;
 
+    [NonSerialized]
+    private readonly SemaphoreSlim saveSemaphore = new(1, 1);
+
+    [NonSerialized]
+    private readonly object saveTaskGate = new();
+
+    [NonSerialized]
+    private Task pendingSaveTask = Task.CompletedTask;
+
     public int Version { get; set; } = 45;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
@@ -534,6 +543,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             return;
         }
 
+        saveSemaphore.Wait();
         try
         {
             pluginInterface.SavePluginConfig(this);
@@ -548,6 +558,40 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
                     "Beastmaster 配置保存失败。请检查 pluginConfigs\\Beastmaster.json 的写入权限。",
                     Array.Empty<object>());
             }
+        }
+        finally
+        {
+            saveSemaphore.Release();
+        }
+    }
+
+    public void QueueSave()
+    {
+        lock (saveTaskGate)
+        {
+            pendingSaveTask = pendingSaveTask.ContinueWith(
+                _ => Save(),
+                CancellationToken.None,
+                TaskContinuationOptions.None,
+                TaskScheduler.Default);
+        }
+    }
+
+    public void FlushPendingSaves()
+    {
+        Task task;
+        lock (saveTaskGate)
+        {
+            task = pendingSaveTask;
+        }
+
+        try
+        {
+            task.GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            DalamudApi.Log.Error(ex, "等待 Beastmaster 配置后台保存完成时失败。", Array.Empty<object>());
         }
     }
 }

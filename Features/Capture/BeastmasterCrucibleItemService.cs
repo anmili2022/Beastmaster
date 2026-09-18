@@ -25,11 +25,13 @@ public sealed unsafe class BeastmasterCrucibleItemService
     private const ushort FirstRecoveryItemId = 76;
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan RecoveryUseInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan FangUseInterval = TimeSpan.FromSeconds(3);
     private static readonly ushort[] RecoveryItemPriority = [140, 79, 78, 77, 76, 82, 81, 80, 135];
     private static readonly ushort[] FangItemPriority = [134, 133, 132, 131, 130, 129, 128, 139];
 
     private DateTime nextRequestUtc = DateTime.MinValue;
     private DateTime nextRecoveryUseUtc = DateTime.MinValue;
+    private DateTime nextFangUseUtc = DateTime.MinValue;
     private DateTime itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
     private DateTime itemDetailCleanupDeadlineUtc = DateTime.MinValue;
     private PendingRequest? pendingRequest;
@@ -128,7 +130,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
                 continue;
             }
 
-            pendingRequest = new PendingRequest(recoveryItemId, player.GameObjectId, true, now.Add(RequestTimeout), displaySlot, inventorySlot, ruleSource);
+            pendingRequest = new PendingRequest(recoveryItemId, player.GameObjectId, true, false, now.Add(RequestTimeout), displaySlot, inventorySlot, ruleSource);
             pendingRequestLastFailure = "尚未尝试分派";
             itemId = recoveryItemId;
             LastDiagnostic = $"选择阶段：{diagnostic}";
@@ -159,6 +161,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
     {
         nextRequestUtc = DateTime.MinValue;
         nextRecoveryUseUtc = DateTime.MinValue;
+        nextFangUseUtc = DateTime.MinValue;
         itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
         itemDetailCleanupDeadlineUtc = DateTime.MinValue;
         pendingRequest = null;
@@ -265,6 +268,10 @@ public sealed unsafe class BeastmasterCrucibleItemService
             dispatchedRecoveryItemId = request.ItemId;
             nextRecoveryUseUtc = now.Add(RecoveryUseInterval);
         }
+        if (request.IsFang)
+        {
+            nextFangUseUtc = now.Add(FangUseInterval);
+        }
     }
 
     private bool TryVerifyRequestSlot(PendingRequest request, out int displaySlot, out uint inventorySlot, out string failure)
@@ -312,6 +319,12 @@ public sealed unsafe class BeastmasterCrucibleItemService
 
         if (itemType == BeastmasterCrucibleItemType.VampireFang)
         {
+            if (now < nextFangUseUtc)
+            {
+                LastFailureReason = "各种牙防重复等待中";
+                return false;
+            }
+
             if (target != null && TryUseCrucibleItemOnTarget(134, target, now, ruleSource))
             {
                 itemId = 134;
@@ -349,6 +362,11 @@ public sealed unsafe class BeastmasterCrucibleItemService
             LastFailureReason = "已有奇弈道具请求等待执行";
             return false;
         }
+        if (now < nextFangUseUtc)
+        {
+            LastFailureReason = "各种牙防重复等待中";
+            return false;
+        }
 
         var fangFailures = new List<string>(FangItemPriority.Length);
         foreach (var fangItemId in FangItemPriority)
@@ -376,10 +394,15 @@ public sealed unsafe class BeastmasterCrucibleItemService
         DateTime now,
         RuleRequestSource? ruleSource = null)
     {
-        if (pendingRequest != null || now < nextRequestUtc || target.IsDead || target.CurrentHp == 0)
+        if (pendingRequest != null
+            || now < nextRequestUtc
+            || (IsFangItem(itemId) && now < nextFangUseUtc)
+            || target.IsDead
+            || target.CurrentHp == 0)
         {
             LastFailureReason = pendingRequest != null ? "已有奇弈道具请求等待执行"
                 : now < nextRequestUtc ? "奇弈道具请求节流中"
+                : IsFangItem(itemId) && now < nextFangUseUtc ? "各种牙防重复等待中"
                 : "目标已死亡或 HP 为 0";
             return false;
         }
@@ -430,7 +453,15 @@ public sealed unsafe class BeastmasterCrucibleItemService
             return false;
         }
 
-        pendingRequest = new PendingRequest(itemId, target.GameObjectId, false, now.Add(RequestTimeout), displaySlot, inventorySlot, ruleSource);
+        pendingRequest = new PendingRequest(
+            itemId,
+            target.GameObjectId,
+            false,
+            IsFangItem(itemId),
+            now.Add(RequestTimeout),
+            displaySlot,
+            inventorySlot,
+            ruleSource);
         pendingRequestLastFailure = "尚未尝试分派";
         return true;
     }
@@ -782,6 +813,9 @@ public sealed unsafe class BeastmasterCrucibleItemService
             _ => 0,
         };
 
+    private static bool IsFangItem(ushort itemId)
+        => itemId is 128 or 129 or 130 or 131 or 132 or 133 or 134 or 139;
+
     public readonly record struct RuleRequestSource(string RuleSetName, string RuleName, int RuleIndex);
 
     public readonly record struct RuleDispatchResult(RuleRequestSource Source, ushort ItemId, bool Success, string Detail);
@@ -790,6 +824,7 @@ public sealed unsafe class BeastmasterCrucibleItemService
         ushort ItemId,
         ulong TargetId,
         bool IsRecovery,
+        bool IsFang,
         DateTime DeadlineUtc,
         int DisplaySlot,
         uint InventorySlot,

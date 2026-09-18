@@ -89,6 +89,7 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         notebookSyncService.Dispose();
         petPartyService.Dispose();
         navigationService.Dispose();
+        Configuration.FlushPendingSaves();
         Configuration.Save();
     }
 
