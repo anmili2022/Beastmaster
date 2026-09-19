@@ -370,6 +370,16 @@ public sealed class BeastmasterRuleService
                 }
                 return matched;
             }
+            case BeastmasterRuleConditionType.CurrentWhistle:
+            {
+                var currentWhistle = BeastmasterGaugeSnapshot.Read().WhistleIndex;
+                var matched = currentWhistle == rule.WhistleIndex;
+                if (matched)
+                {
+                    reason = $"当前为 {currentWhistle} 笛";
+                }
+                return matched;
+            }
             default:
                 return false;
         }
@@ -393,6 +403,7 @@ public sealed class BeastmasterRuleService
                 ConditionId = condition.ConditionId,
                 HpCondition = condition.HpCondition,
                 HpThreshold = condition.HpThreshold,
+                WhistleIndex = condition.WhistleIndex,
             };
             if (Matches(conditionRule, player, target, out var conditionReason))
             {

@@ -64,6 +64,12 @@ public sealed class BeastmasterCountdownService : IDisposable
             return;
         }
 
+        if (customCountdownActive)
+        {
+            DalamudApi.ChatGui.Print($"[驯兽师助手] 自定义倒计时已在运行，还剩 {customCountdownRemaining:0.#} 秒。");
+            return;
+        }
+
         customCountdownActive = true;
         customCountdownDuration = seconds;
         customCountdownRemaining = seconds;

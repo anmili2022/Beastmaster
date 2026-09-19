@@ -14,6 +14,7 @@ public enum BeastmasterRuleConditionType
     SelfHp,
     TargetHp,
     TargetIsBoss,
+    CurrentWhistle,
 }
 
 public enum BeastmasterRuleActionType
@@ -80,6 +81,7 @@ public sealed class BeastmasterRuleDefinition
     public uint ConditionId { get; set; }
     public BeastmasterRuleHpCondition HpCondition { get; set; }
     public float HpThreshold { get; set; } = 50f;
+    public byte WhistleIndex { get; set; } = 1;
     public uint ActionId { get; set; } = 44879;
     public uint CrucibleItemId { get; set; }
 
@@ -118,7 +120,7 @@ public sealed class BeastmasterRuleDefinition
                 }
             }
         }
-        else if (!IsTargetDataIdRule && !IsHealthRule && !IsBossRule && ConditionId == 0)
+        else if (!IsTargetDataIdRule && !IsHealthRule && !IsBossRule && !IsWhistleRule && ConditionId == 0)
         {
             error = IsStatusRule ? "BUFFID 必须大于 0。" : "读条 ID 必须大于 0。";
             return false;
@@ -133,6 +135,12 @@ public sealed class BeastmasterRuleDefinition
         if (Conditions.Count == 0 && RequiresDataId && DataId == 0)
         {
             error = "DataID 必须大于 0。";
+            return false;
+        }
+
+        if (Conditions.Count == 0 && IsWhistleRule && WhistleIndex is < 1 or > 3)
+        {
+            error = "兽笛编号必须为 1、2 或 3。";
             return false;
         }
 
@@ -161,6 +169,9 @@ public sealed class BeastmasterRuleDefinition
     public bool IsBossRule
         => ConditionType is BeastmasterRuleConditionType.TargetIsBoss;
 
+    public bool IsWhistleRule
+        => ConditionType is BeastmasterRuleConditionType.CurrentWhistle;
+
     public bool IsHealthRule
         => ConditionType is BeastmasterRuleConditionType.SelfHp
             or BeastmasterRuleConditionType.TargetHp;
@@ -178,6 +189,7 @@ public sealed class BeastmasterRuleDefinition
                 ConditionId = ConditionId,
                 HpCondition = HpCondition,
                 HpThreshold = HpThreshold,
+                WhistleIndex = WhistleIndex,
             });
         }
     }
@@ -192,6 +204,7 @@ public sealed class BeastmasterRuleDefinition
         ConditionId = first.ConditionId;
         HpCondition = first.HpCondition;
         HpThreshold = first.HpThreshold;
+        WhistleIndex = first.WhistleIndex;
     }
 
 }
@@ -205,6 +218,7 @@ public sealed class BeastmasterRuleCondition
     public uint ConditionId { get; set; }
     public BeastmasterRuleHpCondition HpCondition { get; set; }
     public float HpThreshold { get; set; } = 50f;
+    public byte WhistleIndex { get; set; } = 1;
 
     public bool IsStatusRule => Type is BeastmasterRuleConditionType.SelfStatus
         or BeastmasterRuleConditionType.TargetStatus
@@ -229,6 +243,7 @@ public sealed class BeastmasterRuleCondition
         if (!IsHealthRule
             && Type != BeastmasterRuleConditionType.TargetDataId
             && Type != BeastmasterRuleConditionType.TargetIsBoss
+            && Type != BeastmasterRuleConditionType.CurrentWhistle
             && ConditionId == 0)
         {
             error = IsStatusRule ? "BUFFID 必须大于 0。" : "读条 ID 必须大于 0。";
@@ -244,6 +259,12 @@ public sealed class BeastmasterRuleCondition
         if (IsHealthRule && (!float.IsFinite(HpThreshold) || HpThreshold is < 1f or > 100f))
         {
             error = "血量阈值必须在 1%~100% 之间。";
+            return false;
+        }
+
+        if (Type == BeastmasterRuleConditionType.CurrentWhistle && WhistleIndex is < 1 or > 3)
+        {
+            error = "兽笛编号必须为 1、2 或 3。";
             return false;
         }
 
@@ -383,6 +404,7 @@ public sealed class BeastmasterRuleSetDefinition
                 .AppendLine($"检测ID|{rule.ConditionId}")
                 .AppendLine($"血量条件|{rule.HpCondition}")
                 .AppendLine($"血量阈值|{rule.HpThreshold.ToString(CultureInfo.InvariantCulture)}")
+                .AppendLine($"兽笛|{rule.WhistleIndex}")
                 .AppendLine($"技能|{rule.ActionId}")
                 .AppendLine($"奇弈道具|{rule.CrucibleItemId}");
             for (var conditionIndex = 0; conditionIndex < rule.Conditions.Count; conditionIndex++)
@@ -393,7 +415,8 @@ public sealed class BeastmasterRuleSetDefinition
                     .AppendLine($"条件{conditionIndex}DataId|{condition.DataId}")
                     .AppendLine($"条件{conditionIndex}检测ID|{condition.ConditionId}")
                     .AppendLine($"条件{conditionIndex}血量条件|{condition.HpCondition}")
-                    .AppendLine($"条件{conditionIndex}血量阈值|{condition.HpThreshold.ToString(CultureInfo.InvariantCulture)}");
+                    .AppendLine($"条件{conditionIndex}血量阈值|{condition.HpThreshold.ToString(CultureInfo.InvariantCulture)}")
+                    .AppendLine($"条件{conditionIndex}兽笛|{condition.WhistleIndex}");
             }
         }
 
@@ -491,6 +514,7 @@ public sealed class BeastmasterRuleSetDefinition
             case "检测ID" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var conditionId): rule.ConditionId = conditionId; return true;
             case "血量条件" when Enum.TryParse<BeastmasterRuleHpCondition>(value, out var hpCondition): rule.HpCondition = hpCondition; return true;
             case "血量阈值" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var hpThreshold): rule.HpThreshold = hpThreshold; return true;
+            case "兽笛" when byte.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var whistleIndex): rule.WhistleIndex = whistleIndex; return true;
             case "技能" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var actionId): rule.ActionId = actionId; return true;
             case "奇弈道具" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var itemId): rule.CrucibleItemId = itemId; return true;
             default: return false;
@@ -519,6 +543,7 @@ public sealed class BeastmasterRuleSetDefinition
             "检测ID" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) => Set(() => condition.ConditionId = id),
             "血量条件" when Enum.TryParse<BeastmasterRuleHpCondition>(value, out var hpCondition) => Set(() => condition.HpCondition = hpCondition),
             "血量阈值" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var threshold) => Set(() => condition.HpThreshold = threshold),
+            "兽笛" when byte.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var whistleIndex) => Set(() => condition.WhistleIndex = whistleIndex),
             _ => false,
         };
 
@@ -557,7 +582,7 @@ public static class BeastmasterRuleActions
 
     public static bool RequiresTarget(uint actionId)
         => actionId is 44879 or 44880 or 44883 or 44884 or 44885 or 44887 or 44888 or 44889
-            or 44890 or 44891 or 44893 or 44930 or 44931 or 44932 or 44933 or 47093;
+            or 44890 or 44891 or 44893 or 44930 or 44931 or 44932 or 44933 or 46750 or 46751 or 47093;
 
     public static bool IsCrucibleItemId(uint itemId)
         => itemId is >= 76 and <= 143;

@@ -21,7 +21,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private Task pendingSaveTask = Task.CompletedTask;
 
-    public int Version { get; set; } = 45;
+    public int Version { get; set; } = 47;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
@@ -496,6 +496,42 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         {
             AutoRecoveryItemDiagnosticsEnabled = false;
             Version = 45;
+            Save();
+        }
+
+        if (Version < 46)
+        {
+            foreach (var sequence in Sequences)
+            {
+                foreach (var step in sequence.CountdownSteps)
+                {
+                    if (step.TimeSeconds > 0f)
+                    {
+                        step.TimeSeconds = -Math.Clamp(step.TimeSeconds.Value, 0f, 60f);
+                    }
+                }
+            }
+
+            Version = 46;
+            Save();
+        }
+
+        if (Version < 47)
+        {
+            foreach (var ruleSet in RuleSets)
+            {
+                foreach (var rule in ruleSet.Rules)
+                {
+                    rule.WhistleIndex = (byte)Math.Clamp((int)rule.WhistleIndex, 1, 3);
+                    rule.Conditions ??= [];
+                    foreach (var condition in rule.Conditions)
+                    {
+                        condition.WhistleIndex = (byte)Math.Clamp((int)condition.WhistleIndex, 1, 3);
+                    }
+                }
+            }
+
+            Version = 47;
             Save();
         }
 

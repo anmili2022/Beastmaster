@@ -361,12 +361,6 @@ public sealed class BeastmasterSequenceService
         }
 
         var targetId = requiresTarget ? target!.GameObjectId : 0UL;
-        if (BeastmasterFinalStrikeLock.IsBlocked(adjustedActionId, now))
-        {
-            Status = $"{BeastmasterFinalStrikeLock.GetBlockReason(adjustedActionId, now)}：{step.Label}";
-            nextAttemptUtc = now.AddMilliseconds(100);
-            return true;
-        }
         if (adjustedActionId == 0
             || actionManager->GetActionStatus(ActionType.Action, adjustedActionId, targetId) != 0
             || !actionManager->UseAction(ActionType.Action, adjustedActionId, targetId))
@@ -382,14 +376,6 @@ public sealed class BeastmasterSequenceService
         }
 
         nextAttemptUtc = now.AddMilliseconds(250);
-        if (baseActionId == ReleaseActionId)
-        {
-            BeastmasterFinalStrikeLock.RecordRelease(now);
-        }
-        else if (adjustedActionId == FinalStrikeActionId)
-        {
-            BeastmasterFinalStrikeLock.RecordFinalStrike(now);
-        }
         if (baseActionId is WhistleOneActionId or WhistleTwoActionId or WhistleThreeActionId)
         {
             pendingWhistle = baseActionId == WhistleOneActionId ? (byte)1 : baseActionId == WhistleTwoActionId ? (byte)2 : (byte)3;
@@ -495,7 +481,7 @@ public sealed class BeastmasterSequenceService
         var adjustedActionId = baseActionId is ReleaseActionId or BeastSkillActionId or BorrowActionId
             ? actionManager->GetAdjustedActionId(baseActionId)
             : baseActionId;
-        var requiresTarget = baseActionId is SmashActionId or ReleaseActionId or FinalStrikeActionId;
+        var requiresTarget = IsTargetAction(baseActionId);
         if (requiresTarget && !IsValidTarget(target))
         {
             Abort($"序列中止：{GetActionName(adjustedActionId)}没有有效目标");
@@ -508,13 +494,6 @@ public sealed class BeastmasterSequenceService
         if (adjustedActionId == 0)
         {
             combatStepFailure = $"调整后 ActionId 为 0（基础 ActionId {baseActionId}）";
-            nextAttemptUtc = now.AddMilliseconds(100);
-            return true;
-        }
-
-        if (BeastmasterFinalStrikeLock.IsBlocked(adjustedActionId, now))
-        {
-            combatStepFailure = BeastmasterFinalStrikeLock.GetBlockReason(adjustedActionId, now);
             nextAttemptUtc = now.AddMilliseconds(100);
             return true;
         }
@@ -556,15 +535,6 @@ public sealed class BeastmasterSequenceService
             combatStepFailure = $"UseAction 返回 false（Action {baseActionId}→{adjustedActionId}，Status=0，目标 {targetId}）";
             nextAttemptUtc = now.AddMilliseconds(100);
             return true;
-        }
-
-        if (baseActionId == ReleaseActionId)
-        {
-            BeastmasterFinalStrikeLock.RecordRelease(now);
-        }
-        else if (adjustedActionId == FinalStrikeActionId)
-        {
-            BeastmasterFinalStrikeLock.RecordFinalStrike(now);
         }
 
         PrintChat($"已请求战斗技能：{combatStep + 1}/{sequence.CombatSteps.Count} {step.Label}");
@@ -617,7 +587,7 @@ public sealed class BeastmasterSequenceService
     }
 
     private static bool IsTargetAction(uint actionId)
-        => actionId is SmashActionId or BiteActionId or ShieldActionId or ShieldChargeActionId or ReleaseActionId or FinalStrikeActionId;
+        => actionId is SmashActionId or BiteActionId or ShieldActionId or ShieldChargeActionId or ReleaseActionId or FinalStrikeActionId or 46750 or 46751;
 
     private static bool TryGetWhistleIndex(uint actionId, out byte whistleIndex)
     {

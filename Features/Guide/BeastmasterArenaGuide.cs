@@ -10,7 +10,47 @@ public sealed record BeastmasterArenaGuideRound(
 
 public static class BeastmasterArenaGuide
 {
+    public const string Round2Author = "其他母肥角色@拂晓之间";
     public const string Round3Author = "其他母肥角色@拂晓之间";
+
+    public static IReadOnlyList<BeastmasterArenaGuideRound> Round2 { get; } =
+    [
+        new(
+            string.Empty,
+            [new("奇子·曼提克", true)],
+            "左右刀专场训练",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·牛头魔", true), new("奇子·冥鬼之眼", true)],
+            "BOSS读条「致命射线」时，读条剩余2-3秒可提前站到石板上或不踩BOSS脚下这块；「以太波」直条比较宽，注意范围。尽量快点杀掉，后面机制多了踩石板时间比较紧。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·双足飞龙", true)],
+            "风元精的直条比较慢，中间路被堵死时可从外面走去找BOSS。",
+            "刚开始打还挺唬人的。"),
+        new(
+            string.Empty,
+            [new("奇子·虚灵法师", true), new("奇子·僵尸", false)],
+            "渐渐混乱不要超过16层（可能不准），圈尽量往四个角放。",
+            "你们这是什么关卡怎么又有僵尸又有48。"),
+        new(
+            string.Empty,
+            [new("奇子·牛魔老哥", true), new("奇子·牛魔老弟", true)],
+            "「十吨重踏」跳过去的圈是即死，躲击退的时候不要踩进去。「声援」可被打断，不打断是死刑，大概率能秒杀满血宝宝。",
+            "这也太有劲了呃呃。"),
+        new(
+            string.Empty,
+            [new("奇子·恶魔", true), new("奇子·恶魔兵装", false), new("奇子·小恶魔", false)],
+            "先打有连线的。",
+            "抽不到怪也是一种运气"),
+        new(
+            string.Empty,
+            [new("寻兽探奇 路斯福洛克斯", true), new("小地豆", false)],
+            "不要踩场边沙坑。冒叹号的沙坑会放扇形，场中的四个炸弹能打进小地豆所在的沙坑，对小地豆有伤害。哥布可以打慢点，地震还挺疼的。",
+            string.Empty),
+    ];
 
     public static IReadOnlyList<BeastmasterArenaGuideRound> Round3 { get; } =
     [

@@ -7,6 +7,7 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
 {
     private const string CommandName = "/beastmaster";
     private const string ChineseCommandName = "/驯兽师";
+    private const string ChineseAssistantCommandName = "/驯兽师助手";
     private readonly PluginUI ui;
     private readonly BeastmasterNavigationService navigationService;
     private readonly BeastmasterCatalogChatTracker catalogChatTracker;
@@ -64,6 +65,10 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         {
             HelpMessage = "打开驯兽师助手；子命令：输出、暂停、恢复、关闭、倒计时 [秒数]、取消倒计时。",
         });
+        DalamudApi.Commands.AddHandler(ChineseAssistantCommandName, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "打开驯兽师助手；子命令：输出、暂停、恢复、关闭、倒计时 [秒数]、取消倒计时。",
+        });
 
         pluginInterface.UiBuilder.Draw += ui.Draw;
         pluginInterface.UiBuilder.OpenMainUi += ui.OpenMainWindow;
@@ -79,6 +84,7 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
         DalamudApi.PluginInterface.UiBuilder.OpenConfigUi -= ui.OpenMainWindow;
         DalamudApi.Commands.RemoveHandler(CommandName);
         DalamudApi.Commands.RemoveHandler(ChineseCommandName);
+        DalamudApi.Commands.RemoveHandler(ChineseAssistantCommandName);
         catalogChatTracker.Dispose();
         autoCaptureService.Dispose();
         countdownService.Dispose();
