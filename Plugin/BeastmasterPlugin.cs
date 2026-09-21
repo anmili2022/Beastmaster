@@ -111,7 +111,10 @@ public sealed class BeastmasterPlugin : IDalamudPlugin
 
         if (trimmed.StartsWith("倒计时", StringComparison.Ordinal) || trimmed.StartsWith("countdown", StringComparison.OrdinalIgnoreCase))
         {
-            var remainder = trimmed.Length > 3 ? trimmed[3..].Trim() : string.Empty;
+            var prefixLength = trimmed.StartsWith("countdown", StringComparison.OrdinalIgnoreCase)
+                ? "countdown".Length
+                : "倒计时".Length;
+            var remainder = trimmed.Length > prefixLength ? trimmed[prefixLength..].Trim() : string.Empty;
             if (string.IsNullOrEmpty(remainder))
             {
                 countdownService.StartCustomCountdown(10f);
