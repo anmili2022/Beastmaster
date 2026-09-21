@@ -21,11 +21,13 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     [NonSerialized]
     private Task pendingSaveTask = Task.CompletedTask;
 
-    public int Version { get; set; } = 47;
+    public int Version { get; set; } = 48;
     public string SelectedStageKey { get; set; } = string.Empty;
     public string SelectedMainSection { get; set; } = "quests";
     public bool HideCompletedQuests { get; set; }
     public bool HideCompletedAchievements { get; set; }
+    public bool PinLegendaryAchievements { get; set; }
+    public bool PinBeastPathThreeAchievements { get; set; }
     public bool SortCatalogByLocation { get; set; }
     public bool SortCatalogByLevel { get; set; }
     public bool SortCatalogByBeastLevel { get; set; }
@@ -532,6 +534,14 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
             }
 
             Version = 47;
+            Save();
+        }
+
+        if (Version < 48)
+        {
+            PinLegendaryAchievements = false;
+            PinBeastPathThreeAchievements = false;
+            Version = 48;
             Save();
         }
 

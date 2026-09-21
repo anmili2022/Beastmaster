@@ -29,4 +29,23 @@ public static class BeastmasterAchievementCatalog
         ("高段第一盘", 18750),
         ("高段第二盘", 18500),
     ];
+
+    public static IReadOnlyList<int> LegendaryAchievementIds { get; } =
+    [
+        4044,
+        4046,
+        4048,
+        4050,
+        4052,
+        4054,
+    ];
+
+    public static IReadOnlyList<int> BeastPathThreeAchievementIds { get; } =
+    [
+        4038,
+        4039,
+        4040,
+        4041,
+        4042,
+    ];
 }

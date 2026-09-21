@@ -34,6 +34,8 @@ public sealed unsafe class BeastmasterCrucibleItemService
     private DateTime nextFangUseUtc = DateTime.MinValue;
     private DateTime itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
     private DateTime itemDetailCleanupDeadlineUtc = DateTime.MinValue;
+    private bool closeItemDetailAfterAgentDispatch;
+    private bool closeContextMenuAfterAgentDispatch;
     private PendingRequest? pendingRequest;
     private string pendingRequestLastFailure = string.Empty;
     private ushort dispatchedRecoveryItemId;
@@ -164,6 +166,8 @@ public sealed unsafe class BeastmasterCrucibleItemService
         nextFangUseUtc = DateTime.MinValue;
         itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
         itemDetailCleanupDeadlineUtc = DateTime.MinValue;
+        closeItemDetailAfterAgentDispatch = false;
+        closeContextMenuAfterAgentDispatch = false;
         pendingRequest = null;
         pendingRequestLastFailure = string.Empty;
         dispatchedRecoveryItemId = 0;
@@ -581,6 +585,8 @@ public sealed unsafe class BeastmasterCrucibleItemService
             ? null
             : agentModule->GetAgentByInternalId((AgentId)498);
         var itemDetailWasActive = itemDetail != null && ((AgentInterface*)itemDetail)->IsAgentActive();
+        var contextMenu = (AtkUnitBase*)DalamudApi.GameGui.GetAddonByName("ContextMenu", 1).Address;
+        var contextMenuWasVisible = contextMenu != null && contextMenu->IsVisible;
 
         var selectArgs = stackalloc AtkValue[3];
         selectArgs[0] = new AtkValue { Type = (AtkValueType)3, Int = 6 };
@@ -596,8 +602,10 @@ public sealed unsafe class BeastmasterCrucibleItemService
         useArgs[3] = new AtkValue { Type = AtkValueType.Undefined };
         useArgs[4] = new AtkValue { Type = AtkValueType.Undefined };
         ((AgentInterface*)agent)->ReceiveEvent(&result, useArgs, 5, 3);
-        if (!itemDetailWasActive)
+        if (!itemDetailWasActive || !contextMenuWasVisible)
         {
+            closeItemDetailAfterAgentDispatch = !itemDetailWasActive;
+            closeContextMenuAfterAgentDispatch = !contextMenuWasVisible;
             itemDetailCleanupNotBeforeUtc = now.AddMilliseconds(100);
             itemDetailCleanupDeadlineUtc = now.AddSeconds(1);
         }
@@ -616,6 +624,8 @@ public sealed unsafe class BeastmasterCrucibleItemService
         {
             itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
             itemDetailCleanupDeadlineUtc = DateTime.MinValue;
+            closeItemDetailAfterAgentDispatch = false;
+            closeContextMenuAfterAgentDispatch = false;
             return;
         }
 
@@ -623,11 +633,30 @@ public sealed unsafe class BeastmasterCrucibleItemService
         var itemDetail = agentModule == null
             ? null
             : agentModule->GetAgentByInternalId((AgentId)498);
-        if (itemDetail != null && ((AgentInterface*)itemDetail)->IsAgentActive())
+        var cleaned = false;
+        if (closeItemDetailAfterAgentDispatch
+            && itemDetail != null
+            && ((AgentInterface*)itemDetail)->IsAgentActive())
         {
             ((AgentInterface*)itemDetail)->Hide();
+            cleaned = true;
+        }
+
+        var contextMenu = (AtkUnitBase*)DalamudApi.GameGui.GetAddonByName("ContextMenu", 1).Address;
+        if (closeContextMenuAfterAgentDispatch
+            && contextMenu != null
+            && contextMenu->IsVisible)
+        {
+            contextMenu->Close(true);
+            cleaned = true;
+        }
+
+        if (cleaned)
+        {
             itemDetailCleanupNotBeforeUtc = DateTime.MinValue;
             itemDetailCleanupDeadlineUtc = DateTime.MinValue;
+            closeItemDetailAfterAgentDispatch = false;
+            closeContextMenuAfterAgentDispatch = false;
         }
     }
 

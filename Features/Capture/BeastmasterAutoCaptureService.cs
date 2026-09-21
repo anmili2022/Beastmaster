@@ -26,7 +26,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     private const uint WhistleThreeActionId = 44894;
     private const uint FinalStrikeActionId = 44891;
     private const float CooperationMinimumGcdRemaining = 0.7f;
-    private const float UltimateMinimumGcdRemaining = 1.7f;
     private const uint BorrowActionId = 44895;
     private const uint BeastSkillActionId = 44886;
     private const uint SmashActionId = 44879;
@@ -221,7 +220,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             nextFinalStrikeAttemptUtc = DateTime.MinValue;
             nextSafeShieldAttemptUtc = DateTime.MinValue;
             ResetCaptureState();
-            ResetCooperationState();
+            ResetCooperationState("自动输出关闭");
             ResetAutoWhistle();
             crucibleItemService.Reset();
             DalamudApi.ChatGui.Print("[驯兽师助手] 自动捕获已关闭。");
@@ -278,7 +277,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             nextFinalStrikeAttemptUtc = DateTime.MinValue;
             nextSafeShieldAttemptUtc = DateTime.MinValue;
             ResetCaptureState();
-            ResetCooperationState();
+            ResetCooperationState("自动输出暂停");
             ResetAutoWhistle();
             crucibleItemService.Reset();
         }
@@ -408,7 +407,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             NextActionReason = "暂停开关已开启";
             AdvancedActionStatus = "暂停中";
             ResetCaptureState();
-            ResetCooperationState();
+            ResetCooperationState("暂停开关开启");
             ResetAutoWhistle();
             crucibleItemService.Reset();
             return;
@@ -506,7 +505,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             nextFinalStrikeAttemptUtc = DateTime.MinValue;
             nextSafeShieldAttemptUtc = DateTime.MinValue;
             ResetCaptureState();
-            ResetCooperationState();
+            ResetCooperationState("复活后重置");
             ResetAutoWhistle();
         }
 
@@ -533,9 +532,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (pendingCooperationActionId != 0 && pendingCooperationUntilUtc <= now)
         {
-            pendingCooperationActionId = 0;
-            pendingCooperationStatusId = 0;
-            pendingCooperationUntilUtc = DateTime.MinValue;
+            ResetCooperationState($"等待二段超时；二段 {GetActionName(pendingCooperationActionId)}（{pendingCooperationActionId}），Buff {pendingCooperationStatusId}");
         }
 
         if (smashActionId == 0 || biteActionId == 0 || shieldActionId == 0 || captureActionId == 0 || captureStatusId == 0)
@@ -661,7 +658,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             TargetStatus = "无有效目标";
             TargetHpPercent = 0f;
             ResetCaptureState();
-            ResetCooperationState();
+            ResetCooperationState("没有有效敌对目标");
             return;
         }
 
@@ -692,7 +689,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             NextActionName = "-";
             NextActionReason = "主动攻击已关闭，未进战时不攻击或捕获";
             ResetCaptureState();
-            ResetCooperationState();
+            ResetCooperationState("主动攻击关闭且尚未进入战斗");
             return;
         }
 
@@ -761,14 +758,30 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 return;
             }
         }
-        else if (gcdActive
-            && gcdRemaining > 0f
-            && abilitiesUsedInGcdWindow < MaxAbilitiesPerGcdWindow)
+        else if (gcdActive && gcdRemaining > 0f)
         {
+            if (pendingCooperationActionId != 0)
+            {
+                ReportCooperationDiagnostic(
+                    $"待续 {GetActionName(pendingCooperationActionId)}（{pendingCooperationActionId}）；Buff={pendingCooperationStatusId}，"
+                    + $"是否存在={HasSelfStatus(pendingCooperationStatusId)}，GCD剩余={gcdRemaining:0.###}s，能力技计数={abilitiesUsedInGcdWindow}/{MaxAbilitiesPerGcdWindow}",
+                    $"pending-{pendingCooperationActionId}-{pendingCooperationStatusId}-{HasSelfStatus(pendingCooperationStatusId)}");
+            }
+
             if (gcdRemaining > CooperationMinimumGcdRemaining
                 && TryUseCooperationSecondStage(actionManager, gauge, player, target, now))
             {
                 abilitiesUsedInGcdWindow++;
+                return;
+            }
+
+            if (abilitiesUsedInGcdWindow >= MaxAbilitiesPerGcdWindow)
+            {
+                StatusText = "等待 GCD 转好";
+                NextActionName = "-";
+                NextActionReason = pendingCooperationActionId != 0
+                    ? "本 GCD 能力技次数已满；协作二段保留到下一安全窗口"
+                    : "本 GCD 窗口已放满 2 个能力技，等待 GCD";
                 return;
             }
 
@@ -823,7 +836,9 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 return;
             }
 
-            if (TryUseFinalStrike(actionManager, gauge, target.GameObjectId, now))
+            if (pendingCooperationActionId == 0
+                && !HasRecoverableCooperationBuff()
+                && TryUseFinalStrike(actionManager, gauge, target.GameObjectId, now))
             {
                 abilitiesUsedInGcdWindow++;
                 return;
@@ -845,11 +860,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 return;
             }
 
-            if (TryUseUltimateAuto(actionManager, gauge, player, target, basicComboActionId, now))
-            {
-                abilitiesUsedInGcdWindow++;
-                return;
-            }
         }
 
         StatusText = abilitiesUsedInGcdWindow >= MaxAbilitiesPerGcdWindow
@@ -1181,7 +1191,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         nextReleaseAttemptUtc = DateTime.MinValue;
         nextFinalStrikeAttemptUtc = DateTime.MinValue;
         ResetCaptureState();
-        ResetCooperationState();
+        ResetCooperationState("目标切换");
     }
 
     private static unsafe uint GetBasicComboActionId(ActionManager* actionManager, IBattleChara player)
@@ -1252,6 +1262,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     {
         if ((!configuration.BeastHeartCooperationEnabled && !configuration.BeastSoulCooperationEnabled)
             || pendingCooperationActionId != 0
+            || HasRecoverableCooperationBuff()
             || !TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var cooperationActionId, out var cooperationFollowUpId, out var cooperationStatusId))
         {
             return false;
@@ -1288,6 +1299,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         pendingCooperationActionId = cooperationFollowUpId;
         pendingCooperationStatusId = cooperationStatusId;
         pendingCooperationUntilUtc = now.AddSeconds(7);
+        ReportCooperationDiagnostic(
+            $"已建立{(configuration.BeastHeartCooperationEnabled ? "御兽（黄豆）" : "兽灵（蓝豆）")}待续："
+            + $"一段 {GetActionName(cooperationActionId)}（{cooperationActionId}），"
+            + $"二段 {GetActionName(cooperationFollowUpId)}（{cooperationFollowUpId}），"
+            + $"等待 {GetAttributeStatusName(cooperationStatusId)}（{cooperationStatusId}），"
+            + $"技力={gauge.Tp}/250，兽力={gauge.BeastPower}/250，窗口=7s",
+            $"created-{cooperationActionId}-{cooperationFollowUpId}-{cooperationStatusId}");
         return true;
     }
 
@@ -1298,10 +1316,25 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         IBattleChara target,
         DateTime now)
     {
-        if ((!configuration.BeastHeartCooperationEnabled && !configuration.BeastSoulCooperationEnabled)
-            || pendingCooperationActionId == 0)
+        if (!configuration.BeastHeartCooperationEnabled && !configuration.BeastSoulCooperationEnabled)
         {
             return false;
+        }
+
+        if (pendingCooperationActionId == 0)
+        {
+            if (!TryGetCooperationFollowUpFromStatuses(out var recoveredActionId, out var recoveredStatusId))
+            {
+                return false;
+            }
+
+            pendingCooperationActionId = recoveredActionId;
+            pendingCooperationStatusId = recoveredStatusId;
+            pendingCooperationUntilUtc = now.AddSeconds(7);
+            ReportCooperationDiagnostic(
+                $"从人物现有{GetAttributeStatusName(recoveredStatusId)}（{recoveredStatusId}）恢复二段候选："
+                + $"{GetActionName(recoveredActionId)}（{recoveredActionId}）",
+                $"recovered-{recoveredActionId}-{recoveredStatusId}");
         }
 
         var pendingActionId = pendingCooperationActionId;
@@ -1328,6 +1361,14 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         var cooperationStatus = actionManager->GetActionStatus(ActionType.Action, pendingActionId, target.GameObjectId);
+        if (BeastmasterFinalStrikeLock.IsBlocked(pendingActionId, now))
+        {
+            NextActionReason = BeastmasterFinalStrikeLock.GetBlockReason(pendingActionId, now);
+            ReportCooperationDiagnostic(
+                $"{NextActionName}被保护窗口阻止：{NextActionReason}",
+                $"protected-{pendingActionId}");
+            return false;
+        }
         if (!TryUseAdvancedAction(actionManager, pendingActionId, target.GameObjectId, cooperationStatus))
         {
             ReportCooperationDiagnostic(
@@ -1342,8 +1383,47 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         ReportCooperationDiagnostic($"已完成协作第二段：{NextActionName}", "completed");
         ReportAutoOutputSuccess(NextActionName, pendingActionId);
         nextActionUtc = now.AddMilliseconds(700);
-        ResetCooperationState();
+        ResetCooperationState("协作二段成功完成");
         return true;
+    }
+
+    private bool HasRecoverableCooperationBuff()
+        => TryGetCooperationFollowUpFromStatuses(out _, out _);
+
+    private bool TryGetCooperationFollowUpFromStatuses(out uint actionId, out uint statusId)
+    {
+        actionId = 0;
+        statusId = 0;
+        var player = DalamudApi.ObjectTable.LocalPlayer;
+        if (player == null
+            || (!configuration.BeastHeartCooperationEnabled && !configuration.BeastSoulCooperationEnabled))
+        {
+            return false;
+        }
+
+        var statusIds = player.StatusList.Select(status => status.StatusId).ToHashSet();
+        statusId = new uint[] { 4598, 4595, 4596, 4597 }
+            .FirstOrDefault(statusIds.Contains);
+        if (statusId == 0)
+        {
+            return false;
+        }
+
+        if (configuration.BeastSoulCooperationEnabled)
+        {
+            actionId = BeastmasterUltimateActionId;
+            return true;
+        }
+
+        actionId = statusId switch
+        {
+            4598 => 44889u,
+            4595 => 44884u,
+            4596 => 44887u,
+            4597 => 44888u,
+            _ => 0u,
+        };
+        return actionId != 0;
     }
 
     private unsafe bool TryUseBorrow(ActionManager* actionManager, DateTime now)
@@ -1396,69 +1476,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         ReportAutoOutputSuccess(NextActionName, adjustedActionId);
-        nextActionUtc = now.AddMilliseconds(700);
-        return true;
-    }
-
-    private unsafe bool TryUseUltimateAuto(
-        ActionManager* actionManager,
-        BeastmasterGaugeSnapshot gauge,
-        IBattleChara player,
-        IBattleChara target,
-        uint gcdActionId,
-        DateTime now)
-    {
-        if (configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
-        {
-            return false;
-        }
-
-        if (gauge.SummonEntry == null
-            || gauge.Tp < BeastmasterGaugeSnapshot.ComboGaugeRequirement
-            || gauge.BeastPower < BeastmasterGaugeSnapshot.ComboGaugeRequirement)
-        {
-            return false;
-        }
-
-        var gcdActive = actionManager->IsRecastTimerActive(ActionType.Action, gcdActionId);
-        var gcdTotal = actionManager->GetRecastTime(ActionType.Action, gcdActionId);
-        var gcdElapsed = actionManager->GetRecastTimeElapsed(ActionType.Action, gcdActionId);
-        var gcdRemaining = gcdActive ? Math.Max(0f, gcdTotal - gcdElapsed) : 0f;
-        if (!gcdActive || gcdRemaining <= UltimateMinimumGcdRemaining)
-        {
-            NextActionName = GetActionName(BeastmasterUltimateActionId);
-            NextActionReason = $"等待 GCD 安全窗口（剩余 {gcdRemaining:0.###} 秒，要求 > {UltimateMinimumGcdRemaining:0.###} 秒）";
-            ReportAutoOutputDiagnostic(NextActionName, NextActionReason, "gcd-window");
-            return false;
-        }
-
-        var actionId = BeastmasterUltimateActionId;
-        if (BeastmasterFinalStrikeLock.IsBlocked(actionId, now))
-        {
-            NextActionName = GetActionName(actionId);
-            NextActionReason = BeastmasterFinalStrikeLock.GetBlockReason(actionId, now);
-            return false;
-        }
-        if (!BeastmasterActionHelper.IsPlayerInActionRange(
-                player,
-                target,
-                actionId,
-                out _,
-                out _))
-        {
-            return false;
-        }
-
-        var status = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
-        if (status != 0 || !actionManager->UseAction(ActionType.Action, actionId, target.GameObjectId))
-        {
-            return false;
-        }
-
-        StatusText = "自动大招...";
-        NextActionName = GetActionName(actionId);
-        NextActionReason = "技力和兽力满足大招门槛";
-        ReportAutoOutputSuccess(NextActionName, actionId);
         nextActionUtc = now.AddMilliseconds(700);
         return true;
     }
@@ -2026,8 +2043,14 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         WhistleRotationStatus = reason;
     }
 
-    private void ResetCooperationState()
+    private void ResetCooperationState(string reason = "状态重置")
     {
+        if (pendingCooperationActionId != 0)
+        {
+            RecordBattleLog(
+                $"协作二段：清除待续；原因={reason}；二段={GetActionName(pendingCooperationActionId)}（{pendingCooperationActionId}），"
+                + $"Buff={pendingCooperationStatusId}，剩余窗口={Math.Max(0d, (pendingCooperationUntilUtc - DateTime.UtcNow).TotalSeconds):0.###}s");
+        }
         pendingCooperationActionId = 0;
         pendingCooperationStatusId = 0;
         pendingCooperationUntilUtc = DateTime.MinValue;

@@ -2176,9 +2176,40 @@ public sealed class PluginUI
             configuration.Save();
         }
 
+        ImGui.SameLine();
+        var pinLegendaryAchievements = configuration.PinLegendaryAchievements;
+        if (ImGui.Checkbox("传说级成就置顶", ref pinLegendaryAchievements))
+        {
+            configuration.PinLegendaryAchievements = pinLegendaryAchievements;
+            configuration.Save();
+        }
+        ImGui.SameLine();
+        var pinBeastPathThreeAchievements = configuration.PinBeastPathThreeAchievements;
+        if (ImGui.Checkbox("兽道3成就置顶", ref pinBeastPathThreeAchievements))
+        {
+            configuration.PinBeastPathThreeAchievements = pinBeastPathThreeAchievements;
+            configuration.Save();
+        }
+
         ImGui.Spacing();
         ImGui.TextColored(new Vector4(1f, 0.82f, 0.25f, 1f), "传说级驯兽师分数线");
         ImGui.TextDisabled(string.Join(" · ", BeastmasterAchievementCatalog.LegendaryPoints.Select(point => $"{point.Arena} {point.Points}")));
+        if (configuration.PinLegendaryAchievements)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.82f, 0.25f, 1f), "传说级成就");
+            foreach (var achievementId in BeastmasterAchievementCatalog.LegendaryAchievementIds)
+            {
+                DrawAchievementEntry(achievementSheet, achievementId);
+            }
+        }
+        if (configuration.PinBeastPathThreeAchievements)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.82f, 0.25f, 1f), "兽道3成就");
+            foreach (var achievementId in BeastmasterAchievementCatalog.BeastPathThreeAchievementIds)
+            {
+                DrawAchievementEntry(achievementSheet, achievementId);
+            }
+        }
         ImGui.Spacing();
 
         foreach (var group in BeastmasterAchievementCatalog.Groups)
@@ -2194,44 +2225,55 @@ public sealed class PluginUI
                     continue;
                 }
 
-                if (!achievementSheet.TryGetRow((uint)achievementId, out var achievement))
-                {
-                    ImGui.TextDisabled($"#{achievementId} 未找到成就资料");
-                    continue;
-                }
-
-                var name = achievement.Name.ExtractText();
-                var description = achievement.Description.ExtractText();
-                var points = achievement.Points;
-                var titleText = achievement.Title.Value.Masculine.ExtractText();
-                if (string.IsNullOrWhiteSpace(titleText))
-                {
-                    titleText = achievement.Title.Value.Feminine.ExtractText();
-                }
-
-                var isCompleted = progressService.IsAchievementCompleted(achievementId);
-                var stateColor = isCompleted
-                    ? new Vector4(0.35f, 0.8f, 0.48f, 1f)
-                    : new Vector4(0.62f, 0.62f, 0.62f, 1f);
-
-                ImGui.TextColored(stateColor, $"{achievementId} {name}");
-                ImGui.SameLine();
-                ImGui.TextDisabled($"[{points}]");
-                ImGui.SameLine();
-                ImGui.TextColored(stateColor, isCompleted ? "[已完成]" : "[未完成]");
-
-                if (!string.IsNullOrWhiteSpace(description))
-                {
-                    ImGui.TextDisabled($"  {description}");
-                }
-
-                if (!string.IsNullOrWhiteSpace(titleText))
-                {
-                    ImGui.TextDisabled($"  称号：{titleText}");
-                }
+                DrawAchievementEntry(achievementSheet, achievementId);
             }
 
             ImGui.Spacing();
+        }
+    }
+
+    private void DrawAchievementEntry(Lumina.Excel.ExcelSheet<Achievement> achievementSheet, int achievementId)
+    {
+        if (configuration.HideCompletedAchievements
+            && progressService.IsAchievementCompleted(achievementId))
+        {
+            return;
+        }
+
+        if (!achievementSheet.TryGetRow((uint)achievementId, out var achievement))
+        {
+            ImGui.TextDisabled($"#{achievementId} 未找到成就资料");
+            return;
+        }
+
+        var name = achievement.Name.ExtractText();
+        var description = achievement.Description.ExtractText();
+        var points = achievement.Points;
+        var titleText = achievement.Title.Value.Masculine.ExtractText();
+        if (string.IsNullOrWhiteSpace(titleText))
+        {
+            titleText = achievement.Title.Value.Feminine.ExtractText();
+        }
+
+        var isCompleted = progressService.IsAchievementCompleted(achievementId);
+        var stateColor = isCompleted
+            ? new Vector4(0.35f, 0.8f, 0.48f, 1f)
+            : new Vector4(0.62f, 0.62f, 0.62f, 1f);
+
+        ImGui.TextColored(stateColor, $"{achievementId} {name}");
+        ImGui.SameLine();
+        ImGui.TextDisabled($"[{points}]");
+        ImGui.SameLine();
+        ImGui.TextColored(stateColor, isCompleted ? "[已完成]" : "[未完成]");
+
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            ImGui.TextDisabled($"  {description}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(titleText))
+        {
+            ImGui.TextDisabled($"  称号：{titleText}");
         }
     }
 
@@ -2292,7 +2334,7 @@ public sealed class PluginUI
         DrawGuideFloor("第二盘", BeastmasterArenaGuide.Round2, BeastmasterArenaGuide.Round2Author);
         DrawGuideFloor("第三盘", BeastmasterArenaGuide.Round3, BeastmasterArenaGuide.Round3Author);
         DrawGuideFloor("高段第一盘", null);
-        DrawGuideFloor("高段第二盘", null);
+        DrawGuideFloor("高段第二盘", BeastmasterArenaGuide.HighRound2, BeastmasterArenaGuide.HighRound2Author);
 
         ImGui.EndTabBar();
     }
