@@ -1282,10 +1282,60 @@ public sealed class PluginUI
         {
             var itemType = (int)rule.CrucibleItemType;
             ImGui.SetNextItemWidth(190f);
-            if (ImGui.Combo("奇弈道具", ref itemType, "恢复类道具\0各种牙\0闪躲之书\0反射之书\0时之沙\0魔兽刚力药\0吸血鬼之牙\0星之沙\0魔兽吸血药\0魔兽恢复药套装\0"))
+            var selectedItemType = Enum.IsDefined(typeof(BeastmasterCrucibleItemType), itemType)
+                ? (BeastmasterCrucibleItemType)itemType
+                : BeastmasterCrucibleItemType.Recovery;
+            if (ImGui.BeginCombo("奇弈道具", BeastmasterRuleActions.GetCrucibleItemTypeName(selectedItemType)))
             {
-                rule.CrucibleItemType = (BeastmasterCrucibleItemType)itemType;
-                configuration.Save();
+                foreach (var option in Enum.GetValues<BeastmasterCrucibleItemType>())
+                {
+                    var isSelected = option == selectedItemType;
+                    if (ImGui.Selectable(BeastmasterRuleActions.GetCrucibleItemTypeName(option), isSelected))
+                    {
+                        rule.CrucibleItemType = option;
+                        configuration.Save();
+                    }
+
+                    if (isSelected) ImGui.SetItemDefaultFocus();
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip(BeastmasterRuleActions.GetCrucibleItemTypeDescription(option));
+                    }
+                }
+
+                ImGui.EndCombo();
+            }
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(BeastmasterRuleActions.GetCrucibleItemTypeDescription(selectedItemType));
+            }
+
+            if (selectedItemType == BeastmasterCrucibleItemType.Specific)
+            {
+                var itemId = (int)rule.CrucibleItemId;
+                var selectedItemId = BeastmasterRuleActions.IsCrucibleItemId(rule.CrucibleItemId)
+                    ? rule.CrucibleItemId
+                    : BeastmasterRuleActions.KnownCrucibleItemIds[0];
+                if (ImGui.BeginCombo("指定奇弈道具", BeastmasterRuleActions.GetCrucibleItemName(selectedItemId)))
+                {
+                    foreach (var optionId in BeastmasterRuleActions.KnownCrucibleItemIds)
+                    {
+                        var isSelected = optionId == selectedItemId;
+                        if (ImGui.Selectable($"{BeastmasterRuleActions.GetCrucibleItemName(optionId)} ({optionId})", isSelected))
+                        {
+                            rule.CrucibleItemId = optionId;
+                            configuration.Save();
+                        }
+
+                        if (isSelected) ImGui.SetItemDefaultFocus();
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip(BeastmasterRuleActions.GetCrucibleItemDescription(optionId));
+                    }
+
+                    ImGui.EndCombo();
+                }
+
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(BeastmasterRuleActions.GetCrucibleItemDescription(selectedItemId));
             }
         }
         else

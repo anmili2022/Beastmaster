@@ -363,6 +363,12 @@ public sealed unsafe class BeastmasterCrucibleItemService
             return false;
         }
 
+        if (itemType == BeastmasterCrucibleItemType.Specific)
+        {
+            LastFailureReason = "指定道具模式需要提供道具 ID";
+            return false;
+        }
+
         var selfItemId = itemType switch
         {
             BeastmasterCrucibleItemType.DodgeBook => (ushort)137,
@@ -413,6 +419,40 @@ public sealed unsafe class BeastmasterCrucibleItemService
             ? "尚未配置任何牙的 ID"
             : "各种牙均不可用（" + string.Join("；", fangFailures) + "）";
         return false;
+    }
+
+    public bool TryUseSpecificCrucibleItem(
+        ushort itemId,
+        IBattleChara player,
+        IBattleChara? target,
+        DateTime now,
+        out ushort usedItemId,
+        RuleRequestSource? ruleSource = null)
+    {
+        usedItemId = 0;
+        if (!BeastmasterRuleActions.IsCrucibleItemId(itemId))
+        {
+            LastFailureReason = $"未知奇弈道具 ID {itemId}";
+            return false;
+        }
+
+        if (BeastmasterRuleActions.RequiresCrucibleItemTarget(itemId))
+        {
+            if (target == null || target.IsDead || target.CurrentHp == 0)
+            {
+                LastFailureReason = "该奇弈道具需要有效的当前目标";
+                return false;
+            }
+
+            if (!TryUseCrucibleItemOnTarget(itemId, target, now, ruleSource)) return false;
+        }
+        else if (!TryUseCrucibleItemOnTarget(itemId, player, now, ruleSource))
+        {
+            return false;
+        }
+
+        usedItemId = itemId;
+        return true;
     }
 
     public unsafe bool TryUseCrucibleItemOnTarget(

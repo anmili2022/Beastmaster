@@ -203,7 +203,9 @@ public sealed class BeastmasterRuleService
     {
         var requiresTarget = rule.CrucibleItemType is BeastmasterCrucibleItemType.Fang
             or BeastmasterCrucibleItemType.VampireFang
-            or BeastmasterCrucibleItemType.StarSand;
+            or BeastmasterCrucibleItemType.StarSand
+            || rule.CrucibleItemType == BeastmasterCrucibleItemType.Specific
+                && BeastmasterRuleActions.RequiresCrucibleItemTarget(rule.CrucibleItemId);
         if (requiresTarget && target == null)
         {
             Fail(ruleSet, rule, ruleIndex, matchReason, "奇弈道具需要有效的当前目标", now);
@@ -215,8 +217,11 @@ public sealed class BeastmasterRuleService
             ruleSet.Name,
             rule.Name,
             ruleIndex);
-        if (player == null || !crucibleItemService.TryUseCrucibleItemOnTarget(
-                rule.CrucibleItemType, player, target, now, out var itemId, requestSource))
+        ushort itemId = 0;
+        var success = player != null && (rule.CrucibleItemType == BeastmasterCrucibleItemType.Specific
+            ? crucibleItemService.TryUseSpecificCrucibleItem((ushort)rule.CrucibleItemId, player, target, now, out itemId, requestSource)
+            : crucibleItemService.TryUseCrucibleItemOnTarget(rule.CrucibleItemType, player, target, now, out itemId, requestSource));
+        if (!success)
         {
             Fail(ruleSet, rule, ruleIndex, matchReason, crucibleItemService.LastFailureReason, now);
             return false;

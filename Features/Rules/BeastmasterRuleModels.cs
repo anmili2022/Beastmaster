@@ -35,6 +35,7 @@ public enum BeastmasterCrucibleItemType
     StarSand,
     VampireMedicine,
     RecoverySet,
+    Specific,
 }
 
 public enum BeastmasterRuleStatusCondition
@@ -150,6 +151,14 @@ public sealed class BeastmasterRuleDefinition
         if (ActionType == BeastmasterRuleActionType.Skill && !BeastmasterRuleActions.IsSupported(ActionId))
         {
             error = $"不支持规则技能 {ActionId}。";
+            return false;
+        }
+
+        if (ActionType == BeastmasterRuleActionType.CrucibleItem
+            && CrucibleItemType == BeastmasterCrucibleItemType.Specific
+            && !BeastmasterRuleActions.IsCrucibleItemId(CrucibleItemId))
+        {
+            error = "请选择有效的奇弈道具。";
             return false;
         }
 
@@ -591,7 +600,10 @@ public static class BeastmasterRuleActions
         => itemId is >= 76 and <= 143;
 
     public static bool IsCrucibleItemFriendly(uint itemId)
-        => itemId is 76 or 77 or 78 or 79 or 80 or 81 or 82 or 104 or 135 or 136 or 137 or 138 or 140;
+        => !RequiresCrucibleItemTarget(itemId);
+
+    public static bool RequiresCrucibleItemTarget(uint itemId)
+        => itemId is 84 or 96 or 128 or 129 or 130 or 131 or 132 or 133 or 134 or 139;
 
     public static string GetCrucibleItemTypeName(BeastmasterCrucibleItemType itemType)
         => itemType switch
@@ -606,7 +618,25 @@ public static class BeastmasterRuleActions
             BeastmasterCrucibleItemType.StarSand => "星之沙",
             BeastmasterCrucibleItemType.VampireMedicine => "魔兽吸血药",
             BeastmasterCrucibleItemType.RecoverySet => "魔兽恢复药套装",
+            BeastmasterCrucibleItemType.Specific => "指定道具",
             _ => itemType.ToString(),
+        };
+
+    public static string GetCrucibleItemTypeDescription(BeastmasterCrucibleItemType itemType)
+        => itemType switch
+        {
+            BeastmasterCrucibleItemType.Recovery => "按恢复药优先级选择可用道具，对自身恢复 HP。",
+            BeastmasterCrucibleItemType.Fang => "按火、冰、水、雷、土、风之牙及星之沙的优先级，对当前敌对目标造成属性攻击。",
+            BeastmasterCrucibleItemType.DodgeBook => "对自身使用闪躲之书，获得闪躲效果。",
+            BeastmasterCrucibleItemType.ReflectBook => "对自身使用反射之书，获得反射效果。",
+            BeastmasterCrucibleItemType.TimeSand => "对自身使用时之沙，获得时之沙效果。",
+            BeastmasterCrucibleItemType.StrengthMedicine => "对自身使用魔兽刚力药，获得攻击强化效果。",
+            BeastmasterCrucibleItemType.VampireFang => "对当前敌对目标使用吸血鬼之牙，造成伤害并恢复自身 HP。",
+            BeastmasterCrucibleItemType.StarSand => "对当前敌对目标使用星之沙，造成伤害并施加对应效果。",
+            BeastmasterCrucibleItemType.VampireMedicine => "对自身使用魔兽吸血药，获得吸血效果。",
+            BeastmasterCrucibleItemType.RecoverySet => "对自身使用魔兽恢复药套装，恢复大量 HP。",
+            BeastmasterCrucibleItemType.Specific => "从完整目录中选择一个奇弈道具；攻击道具使用当前敌对目标，魔兽金针和回唤兽笛使用当前目标，其余对自身使用。",
+            _ => string.Empty,
         };
 
     public static string GetCrucibleItemName(uint itemId)
@@ -619,7 +649,51 @@ public static class BeastmasterRuleActions
             80 => "1级魔兽药粉",
             81 => "2级魔兽药粉",
             82 => "3级魔兽药粉",
+            83 => "魔兽解毒药",
+            84 => "魔兽金针",
+            85 => "魔兽眼药",
+            86 => "1级魔兽抗毒药",
+            87 => "2级魔兽抗毒药",
+            88 => "1级魔兽抗麻痹药",
+            89 => "2级魔兽抗麻痹药",
+            90 => "1级魔兽抗失明药",
+            91 => "2级魔兽抗失明药",
+            92 => "1级魔兽抗石化药",
+            93 => "2级魔兽抗石化药",
+            94 => "1级魔兽抗睡眠药",
+            95 => "2级魔兽抗睡眠药",
+            96 => "回唤兽笛",
+            97 => "魔兽烟雾弹",
+            98 => "1级魔兽复活药",
+            99 => "2级魔兽复活药",
+            100 => "盗贼之眼",
+            101 => "商人之眼",
+            102 => "魔兽硬肤药",
+            103 => "魔兽缩时药",
             104 => "魔兽刚力药",
+            105 => "魔兽刚力猛药",
+            106 => "魔兽魔力药",
+            107 => "魔兽魔力猛药",
+            108 => "魔兽特攻药",
+            109 => "魔兽特攻猛药",
+            110 => "魔兽敏捷药",
+            111 => "魔兽敏捷猛药",
+            112 => "魔兽耐力药",
+            113 => "魔兽耐力猛药",
+            114 => "魔兽加速药",
+            115 => "魔兽羽毛",
+            116 => "1级魔兽耐火药",
+            117 => "2级魔兽耐火药",
+            118 => "1级魔兽耐水药",
+            119 => "2级魔兽耐水药",
+            120 => "1级魔兽耐土药",
+            121 => "2级魔兽耐土药",
+            122 => "1级魔兽耐雷药",
+            123 => "2级魔兽耐雷药",
+            124 => "1级魔兽耐风药",
+            125 => "2级魔兽耐风药",
+            126 => "1级魔兽耐冰药",
+            127 => "2级魔兽耐冰药",
             128 => "火之牙",
             129 => "冰之牙",
             130 => "水之牙",
@@ -633,13 +707,71 @@ public static class BeastmasterRuleActions
             138 => "时之沙",
             139 => "星之沙",
             140 => "魔兽恢复药套装",
+            141 => "魔兽治愈套装",
+            142 => "铸魔之书",
+            143 => "钢刺之书",
             _ => $"奇弈道具 {itemId}",
+        };
+
+    public static string GetCrucibleItemDescription(uint itemId)
+        => itemId switch
+        {
+            76 => "恢复自身 10% 体力。",
+            77 => "恢复自身 23% 体力。",
+            78 => "恢复自身 36% 体力。",
+            79 => "恢复自身 50% 体力。",
+            80 => "恢复自身及周围队员 10% 体力。",
+            81 => "恢复自身及周围队员 25% 体力。",
+            82 => "恢复自身及周围队员 40% 体力。",
+            83 => "解除中毒；成功治愈后恢复 25% 体力。",
+            84 => "对当前魔兽目标解除石化，恢复 50% 体力并附加石肤。",
+            85 => "解除失明；成功治愈后恢复 25% 体力。",
+            86 or 87 => "提高中毒耐性；2级作用于自身及周围队员。",
+            88 or 89 => "提高麻痹耐性；2级作用于自身及周围队员。",
+            90 or 91 => "提高失明耐性；2级作用于自身及周围队员。",
+            92 or 93 => "提高石化耐性；2级作用于自身及周围队员。",
+            94 or 95 => "提高睡眠耐性；2级作用于自身及周围队员。",
+            96 => "让当前目标中陷入无法战斗状态的魔兽复活。",
+            97 => "战斗开始前尝试回避战斗；对强敌和头目无效。",
+            98 => "附加重生，无法战斗时有 70% 几率自动复活。",
+            99 => "附加重生，无法战斗时有 95% 几率自动复活。",
+            100 => "附加盗贼之眼，下次战斗的战利品掉落率变为 3 倍。",
+            101 => "附加商人之眼，下次战斗的斗兽币获得量变为 2 倍。",
+            102 => "附加硬肤药，受到伤害减轻 20%。",
+            103 => "附加缩时药，攻击间隔及技能咏唱、复唱时间缩短 15%。",
+            104 => "附加刚力药，物理伤害提高 30%。",
+            105 => "以眩晕为代价，物理伤害提高 45%。",
+            106 => "附加魔力药，魔法伤害提高 30%。",
+            107 => "以噩梦为代价，魔法伤害提高 50%。",
+            108 => "附加特攻药，暴击发动率提高 30%。",
+            109 => "以石化为代价，暴击发动率提高 50%。",
+            110 => "附加敏捷药，回避率提高 25%。",
+            111 => "以失明为代价，回避率提高 25%。",
+            112 => "恢复 10% 体力，并提高最大体力 20%。",
+            113 => "以猛毒为代价，恢复 10% 体力并提高最大体力 30%。",
+            114 => "提高移动速度、回避率和中毒耐性。",
+            115 => "增加 100 点技力；持有高昂戒指时增加 250 点。",
+            >= 116 and <= 127 => "提高对应属性伤害的无效化及吸收几率；2级效果更强。",
+            >= 128 and <= 133 => "对当前敌对目标及其周围敌人造成对应属性范围魔法伤害。",
+            134 => "对当前敌对目标及其周围敌人造成风属性范围魔法伤害。",
+            135 => "附加吸血攻击，恢复造成伤害 10% 的体力。",
+            136 => "附加反射，反射除特定攻击外的魔法攻击。",
+            137 => "附加 5 档闪躲，使物理攻击无效化。",
+            138 => "附加时之沙，战斗败北后回到战斗开始前。",
+            139 => "对当前敌对目标及其周围敌人发动星体风暴，并降低火属性耐性。",
+            140 => "体力低于 50% 时自动恢复 40% 体力。",
+            141 => "附加自动治愈，可免疫一次部分异常状态。",
+            142 => "附加铸魔，使自身和魔兽的所有攻击附带魔法属性。",
+            143 => "附加钢刺，使自身和魔兽的所有攻击附带物理属性。",
+            _ => string.Empty,
         };
 
     public static readonly uint[] KnownCrucibleItemIds =
     [
-        76, 77, 78, 79, 80, 81, 82, 104,
-        128, 129, 130, 131, 132, 133, 134,
-        135, 136, 137, 138, 139, 140,
+        76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91,
+        92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107,
+        108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
+        124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139,
+        140, 141, 142, 143,
     ];
 }
