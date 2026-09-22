@@ -111,19 +111,34 @@ public sealed class BeastmasterRuleService
             return TryExecuteCrucibleItem(ruleSet, rule, ruleIndex, target, matchReason, now);
         }
 
-        var targetId = BeastmasterRuleActions.RequiresTarget(rule.ActionId)
+        var requestedActionId = rule.ActionId;
+        var resolvedBeastSkillId = BeastmasterActionHelper.IsBeastSkillAction(requestedActionId)
+            ? BeastmasterActionHelper.ResolveBeastSkillAction(actionManager)
+            : 0u;
+        if (BeastmasterActionHelper.IsBeastSkillAction(requestedActionId)
+            && !BeastmasterActionHelper.IsBeastSkillAction(resolvedBeastSkillId))
+        {
+            Fail(ruleSet, rule, ruleIndex, matchReason, "魔兽技当前没有有效的借用技能（44886 未调整为 44896~44903）", now);
+            return false;
+        }
+
+        var actionId = resolvedBeastSkillId != 0 ? resolvedBeastSkillId : requestedActionId;
+        var targetId = BeastmasterRuleActions.RequiresTarget(requestedActionId)
+            || (target != null
+                && BeastmasterActionHelper.IsBeastSkillAction(requestedActionId)
+                && ActionManager.CanUseActionOnTarget(actionId, (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)target.Address))
             ? target?.GameObjectId ?? 0UL
             : 0UL;
-        if (BeastmasterRuleActions.RequiresTarget(rule.ActionId) && targetId == 0)
+        if (BeastmasterRuleActions.RequiresTarget(requestedActionId) && targetId == 0)
         {
             Fail(ruleSet, rule, ruleIndex, matchReason, "所选技能需要有效的当前目标", now);
             return false;
         }
 
         var availability = BeastmasterActionHelper.GetAvailability(
-            rule.ActionId,
+            actionId,
             targetId,
-            BeastmasterRuleActions.UsesAdjustedActionId(rule.ActionId));
+            BeastmasterRuleActions.UsesAdjustedActionId(requestedActionId));
         if (BeastmasterFinalStrikeLock.IsBlocked(availability.ActionId, now))
         {
             Fail(ruleSet, rule, ruleIndex, matchReason,
@@ -187,7 +202,8 @@ public sealed class BeastmasterRuleService
         DateTime now)
     {
         var requiresTarget = rule.CrucibleItemType is BeastmasterCrucibleItemType.Fang
-            or BeastmasterCrucibleItemType.VampireFang;
+            or BeastmasterCrucibleItemType.VampireFang
+            or BeastmasterCrucibleItemType.StarSand;
         if (requiresTarget && target == null)
         {
             Fail(ruleSet, rule, ruleIndex, matchReason, "奇弈道具需要有效的当前目标", now);

@@ -8,6 +8,13 @@ namespace Beastmaster;
 public static class BeastmasterActionHelper
 {
     private const float BasicComboRange = 6f;
+    public const uint BeastSkillBaseActionId = 44886;
+
+    public static bool IsBeastSkillAction(uint actionId)
+        => actionId is >= 44896 and <= 44903;
+
+    public static unsafe uint ResolveBeastSkillAction(ActionManager* actionManager)
+        => actionManager == null ? 0u : actionManager->GetAdjustedActionId(BeastSkillBaseActionId);
 
     public static bool IsPlayerInActionRange(
         IBattleChara player,

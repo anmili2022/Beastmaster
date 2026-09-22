@@ -1455,8 +1455,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     private unsafe bool TryUseBeastSkill(ActionManager* actionManager, ulong targetId, DateTime now)
     {
-        var adjustedActionId = actionManager->GetAdjustedActionId(BeastSkillActionId);
-        if (adjustedActionId is < 44896 or > 44903)
+        var adjustedActionId = BeastmasterActionHelper.ResolveBeastSkillAction(actionManager);
+        if (!BeastmasterActionHelper.IsBeastSkillAction(adjustedActionId))
         {
             return false;
         }

@@ -1282,7 +1282,7 @@ public sealed class PluginUI
         {
             var itemType = (int)rule.CrucibleItemType;
             ImGui.SetNextItemWidth(190f);
-            if (ImGui.Combo("奇弈道具", ref itemType, "恢复类道具\0各种牙\0闪躲之书\0反射之书\0时之沙\0魔兽刚力药\0吸血鬼之牙\0"))
+            if (ImGui.Combo("奇弈道具", ref itemType, "恢复类道具\0各种牙\0闪躲之书\0反射之书\0时之沙\0魔兽刚力药\0吸血鬼之牙\0星之沙\0魔兽吸血药\0魔兽恢复药套装\0"))
             {
                 rule.CrucibleItemType = (BeastmasterCrucibleItemType)itemType;
                 configuration.Save();

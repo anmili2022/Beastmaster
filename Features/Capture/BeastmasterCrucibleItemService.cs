@@ -342,12 +342,35 @@ public sealed unsafe class BeastmasterCrucibleItemService
             return false;
         }
 
+        if (itemType == BeastmasterCrucibleItemType.StarSand)
+        {
+            if (now < nextFangUseUtc)
+            {
+                LastFailureReason = "各种牙防重复等待中";
+                return false;
+            }
+
+            if (target != null && TryUseCrucibleItemOnTarget(139, target, now, ruleSource))
+            {
+                itemId = 139;
+                return true;
+            }
+
+            if (target == null)
+            {
+                LastFailureReason = "星之沙需要有效敌对目标";
+            }
+            return false;
+        }
+
         var selfItemId = itemType switch
         {
             BeastmasterCrucibleItemType.DodgeBook => (ushort)137,
             BeastmasterCrucibleItemType.ReflectBook => (ushort)136,
             BeastmasterCrucibleItemType.TimeSand => (ushort)138,
             BeastmasterCrucibleItemType.StrengthMedicine => (ushort)104,
+            BeastmasterCrucibleItemType.VampireMedicine => (ushort)135,
+            BeastmasterCrucibleItemType.RecoverySet => (ushort)140,
             _ => (ushort)0,
         };
         if (selfItemId != 0)

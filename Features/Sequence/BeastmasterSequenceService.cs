@@ -275,9 +275,10 @@ public sealed class BeastmasterSequenceService
 
         if (pendingBorrowedAction != 0)
         {
-            if (actionManager->GetAdjustedActionId(BeastSkillActionId) == pendingBorrowedAction)
+            var adjustedBeastSkill = BeastmasterActionHelper.ResolveBeastSkillAction(actionManager);
+            if (BeastmasterActionHelper.IsBeastSkillAction(adjustedBeastSkill))
             {
-                var actionName = GetActionName(pendingBorrowedAction);
+                var actionName = GetActionName(adjustedBeastSkill);
                 pendingBorrowedAction = 0;
                 pendingBorrowedActionStep = -1;
                 countdownStep++;
@@ -330,7 +331,9 @@ public sealed class BeastmasterSequenceService
         }
 
         var baseActionId = step.ActionId;
-        var adjustedActionId = baseActionId is BorrowActionId or BeastSkillActionId
+        var adjustedActionId = BeastmasterActionHelper.IsBeastSkillAction(baseActionId)
+            ? BeastmasterActionHelper.ResolveBeastSkillAction(actionManager)
+            : baseActionId is BorrowActionId or BeastSkillActionId
             ? actionManager->GetAdjustedActionId(baseActionId)
             : baseActionId;
         if (adjustedActionId != 0
@@ -353,7 +356,10 @@ public sealed class BeastmasterSequenceService
             return true;
         }
 
-        var requiresTarget = IsTargetAction(baseActionId);
+        var requiresTarget = IsTargetAction(baseActionId)
+            || (BeastmasterActionHelper.IsBeastSkillAction(baseActionId)
+                && IsValidTarget(target)
+                && ActionManager.CanUseActionOnTarget(adjustedActionId, (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)target!.Address));
         if (requiresTarget && !IsValidTarget(target))
         {
             Abort("序列中止：T-0 没有有效敌对目标");
@@ -478,10 +484,15 @@ public sealed class BeastmasterSequenceService
             return true;
         }
 
-        var adjustedActionId = baseActionId is ReleaseActionId or BeastSkillActionId or BorrowActionId
+        var adjustedActionId = BeastmasterActionHelper.IsBeastSkillAction(baseActionId)
+            ? BeastmasterActionHelper.ResolveBeastSkillAction(actionManager)
+            : baseActionId is ReleaseActionId or BeastSkillActionId or BorrowActionId
             ? actionManager->GetAdjustedActionId(baseActionId)
             : baseActionId;
-        var requiresTarget = IsTargetAction(baseActionId);
+        var requiresTarget = IsTargetAction(baseActionId)
+            || (BeastmasterActionHelper.IsBeastSkillAction(baseActionId)
+                && IsValidTarget(target)
+                && ActionManager.CanUseActionOnTarget(adjustedActionId, (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)target!.Address));
         if (requiresTarget && !IsValidTarget(target))
         {
             Abort($"序列中止：{GetActionName(adjustedActionId)}没有有效目标");

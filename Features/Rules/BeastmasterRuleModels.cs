@@ -32,6 +32,9 @@ public enum BeastmasterCrucibleItemType
     TimeSand,
     StrengthMedicine,
     VampireFang,
+    StarSand,
+    VampireMedicine,
+    RecoverySet,
 }
 
 public enum BeastmasterRuleStatusCondition
@@ -600,6 +603,9 @@ public static class BeastmasterRuleActions
             BeastmasterCrucibleItemType.TimeSand => "时之沙",
             BeastmasterCrucibleItemType.StrengthMedicine => "魔兽刚力药",
             BeastmasterCrucibleItemType.VampireFang => "吸血鬼之牙",
+            BeastmasterCrucibleItemType.StarSand => "星之沙",
+            BeastmasterCrucibleItemType.VampireMedicine => "魔兽吸血药",
+            BeastmasterCrucibleItemType.RecoverySet => "魔兽恢复药套装",
             _ => itemType.ToString(),
         };
 
