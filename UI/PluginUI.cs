@@ -188,7 +188,7 @@ public sealed class PluginUI
             ImGui.Text($"下一个技能：{autoCaptureService.NextActionName}");
             if (!string.IsNullOrWhiteSpace(autoCaptureService.NextActionReason))
             {
-                ImGui.TextDisabled($"原因：{autoCaptureService.NextActionReason}");
+                ImGui.TextDisabled($"原因1：{autoCaptureService.NextActionReason}");
             }
         }
         if (configuration.ShowGaugeInOverlay)
@@ -487,7 +487,7 @@ public sealed class PluginUI
     {
         ImGui.Text("当前目标");
         var target = DalamudApi.TargetManager.Target;
-        if (target is not Dalamud.Game.ClientState.Objects.Types.IBattleChara)
+        if (target is not Dalamud.Game.ClientState.Objects.Types.IBattleChara battleTarget)
         {
             ImGui.SameLine();
             ImGui.TextDisabled("无有效目标");
@@ -498,6 +498,11 @@ public sealed class PluginUI
         ImGui.Text(target.Name.TextValue);
         ImGui.SameLine();
         ImGui.TextDisabled($"{autoCaptureService.TargetHpPercent:0.#}% · {autoCaptureService.TargetStatus}");
+        if (DalamudApi.ObjectTable.LocalPlayer is { } player)
+        {
+            var distance = BeastmasterActionHelper.GetHorizontalTargetDistance(player, battleTarget, out var centerDistance);
+            ImGui.TextDisabled($"距离：{distance:0.##} yalms（水平中心 {centerDistance:0.##}）");
+        }
         if (configuration.ShowGaugeInOverlay)
         {
             ImGui.TextDisabled($"捕获：{autoCaptureService.CaptureState}");
@@ -2380,10 +2385,10 @@ public sealed class PluginUI
             return;
         }
 
-        DrawGuideFloor("第一盘", null);
+        DrawGuideFloor("第一盘", BeastmasterArenaGuide.Round1);
         DrawGuideFloor("第二盘", BeastmasterArenaGuide.Round2, BeastmasterArenaGuide.Round2Author);
         DrawGuideFloor("第三盘", BeastmasterArenaGuide.Round3, BeastmasterArenaGuide.Round3Author);
-        DrawGuideFloor("高段第一盘", null);
+        DrawGuideFloor("高段第一盘", BeastmasterArenaGuide.HighRound1);
         DrawGuideFloor("高段第二盘", BeastmasterArenaGuide.HighRound2, BeastmasterArenaGuide.HighRound2Author);
 
         ImGui.EndTabBar();

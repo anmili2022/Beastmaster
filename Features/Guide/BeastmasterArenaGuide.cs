@@ -14,6 +14,40 @@ public static class BeastmasterArenaGuide
     public const string Round3Author = "其他母肥角色@拂晓之间";
     public const string HighRound2Author = "其他母肥角色@拂晓之间";
 
+    public static IReadOnlyList<BeastmasterArenaGuideRound> Round1 { get; } =
+    [
+        new(
+            string.Empty,
+            [new("奇子·主教", true), new("奇子·骑士", true)],
+            "先打主教，骑士架盾后用宝宝吸引仇恨从背后打。",
+            "一直攻击举盾骑士，过一段时间会自己撤盾，不用等16分钟。"),
+        new(
+            string.Empty,
+            [new("奇子·上级恶魔", true)],
+            "注意观察「深渊贯穿」生成的圆形AOE范围，容易被误伤。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·夺灵魔", true)],
+            "AOE多，注意自身血量。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·祸蛛蝎", true), new("奇子·灵蛛蝎", false)],
+            "「致命尾刺」给的中毒可以消掉，「毒蛛网」给的消不掉，注意血量；小蝎子出现后尽快消灭。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·食人魔", true), new("奇子·妖火", false), new("奇子·大妖火", false)],
+            "第一次「燃烧猛击」为BOSS当前位置扇形，第二回会穿梭至对面火圈放扇形，注意提前跑路；BOSS读条「火灵的守护」时可以提前去场边等候，留技能或使用道具击杀妖火。",
+            "前期装备不好时容易杀不掉。"),
+        new(
+            string.Empty,
+            [new("魅惑女妖 帕德索", true), new("奇子·梦魔法师", false), new("奇子·梦魔骑士", false)],
+            "「血雨」抬手钢铁，不抬手月环；BOSS读条「召唤」后优先击杀梦魔法师，「欺瞒雾」使用吸引注意让宝宝接。",
+            string.Empty),
+    ];
+
     public static IReadOnlyList<BeastmasterArenaGuideRound> Round2 { get; } =
     [
         new(
@@ -95,6 +129,60 @@ public static class BeastmasterArenaGuide
             [new("贪食无厌 加特勒", true), new("奇子·塔纳托斯", true)],
             "这个一句话怕是说不完哦。留意宝宝位置，小心吃平A。",
             "宝宝你怎么掉血了。"),
+    ];
+
+    public static IReadOnlyList<BeastmasterArenaGuideRound> HighRound1 { get; } =
+    [
+        new(
+            string.Empty,
+            [new("奇子·博学林鸮", true), new("博学林鸮的羽毛", false)],
+            "爆震去风圈，魔法锤去史莱姆，狂水去河童。第一个机制固定是白圈，可以提前走位。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·魔界花", true), new("奇子·幼苗", false), new("奇子·大口花", false), new("腐汁", false)],
+            "小怪出了迅速击杀。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·尸生花", true), new("奇子·女王鹰蜂", false)],
+            "踩中荆棘圈时按次伤害，不是DOT。BOSS读条「鲜花陷阱」时荆棘圈会扩大，「吐出」即击退，看好安全区即可。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·冰龙", true), new("冰元精", false)],
+            "BOSS读条「无终的枯朽」时安全区范围比较小，「寒冰覆盖」会在所在位置放置黄圈，建议在安全区内三角形放置。",
+            "或者利用一些可以快速移动的神秘小工具。"),
+        new(
+            string.Empty,
+            [new("奇子·石像鬼", true)],
+            "「突进连斩」为冲向玩家后先前半场刀接后半场刀；「圆环连斩」为脚下钢铁接向外扩展月环；「腐瘴气」时吃球降低BOSS身上的BUFF，但是一次吃不能超过五层。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·管理者", true), new("奇子·故障虫", false), new("奇子·发条步兵", false), new("奇子·恐慌装甲", false), new("奇子·无人机", false), new("奇子·眼镜蛇", false)],
+            "BOSS血量较低，盯着使劲打就行了。",
+            "出的概率似乎很低。"),
+        new(
+            string.Empty,
+            [new("奇子·巨像", true)],
+            "BOSS读条「岩壁」时注意观察尖刺方向，不要被石头撞。第一个巨像死掉后第二个会复活；「岩雨」会出现四块石头，碎掉的石头下为月环。「自爆」不是即死，反而是BOSS自爆完就死了。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·树精", true), new("奇子·蛞蝓", false), new("奇子·花苗", false), new("奇子·凶蛛蝎", false), new("奇子·比洛克", false)],
+            "小怪出来迅速击杀。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("奇子·爆弹之母", true), new("奇子·榴弹怪", false), new("奇子·爆弹怪", false), new("奇子·雪弹怪", false), new("奇子·焰球", false)],
+            "随机怪一般都比较简单，盯着BOSS杀就行。",
+            string.Empty),
+        new(
+            string.Empty,
+            [new("怨毒龙 博尔格尼", true), new("有毒物质", false)],
+            "BOSS读条「猛毒吐息」时向后跳至场边，喷出扇形毒雾，实际安全范围为目标圈大小的圆形，注意观察BOSS面向；「猛毒黏液」将毒圈沿场边放置；BOSS读条「蠕动的痰」时远离毒圈放置目标，并在目标进入毒圈前击杀。",
+            string.Empty),
     ];
 
     public static IReadOnlyList<BeastmasterArenaGuideRound> HighRound2 { get; } =

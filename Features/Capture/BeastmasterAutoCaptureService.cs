@@ -441,7 +441,11 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         if (now < nextActionUtc)
         {
             StatusText = "等待可执行状态";
-            NextActionReason = "技能节流等待";
+            if (string.IsNullOrWhiteSpace(NextActionReason)
+                || NextActionReason == "基础连击（1→2→3）")
+            {
+                NextActionReason = "技能节流等待";
+            }
             return;
         }
 
@@ -732,22 +736,19 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         var gcdTotal = actionManager->GetRecastTime(ActionType.Action, basicComboActionId);
         var gcdElapsed = actionManager->GetRecastTimeElapsed(ActionType.Action, basicComboActionId);
         var gcdRemaining = gcdActive ? Math.Max(0f, gcdTotal - gcdElapsed) : 0f;
-        var gcdReady = !gcdActive
-            && actionManager->GetActionStatus(ActionType.Action, basicComboActionId, target.GameObjectId) == 0;
+        var gcdReady = !gcdActive;
+        var basicComboAttempted = false;
 
         if (gcdReady)
         {
-            if ((configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
-                && TryUseThirdFormAction(actionManager, gauge, target.GameObjectId, now))
+            if (configuration.BasicComboEnabled)
             {
-                abilitiesUsedInGcdWindow = 0;
-                return;
-            }
-
-            if (configuration.BasicComboEnabled && TryUseBasicCombo(actionManager, player, target, now))
-            {
-                abilitiesUsedInGcdWindow = 0;
-                return;
+                basicComboAttempted = true;
+                if (TryUseBasicCombo(actionManager, player, target, now))
+                {
+                    abilitiesUsedInGcdWindow = 0;
+                    return;
+                }
             }
 
             if (!configuration.BasicComboEnabled)
@@ -782,6 +783,14 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 NextActionReason = pendingCooperationActionId != 0
                     ? "本 GCD 能力技次数已满；协作二段保留到下一安全窗口"
                     : "本 GCD 窗口已放满 2 个能力技，等待 GCD";
+                return;
+            }
+
+            if (gcdRemaining > CooperationMinimumGcdRemaining
+                && (configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
+                && TryUseThirdFormAction(actionManager, gauge, target.GameObjectId, now))
+            {
+                abilitiesUsedInGcdWindow++;
                 return;
             }
 
@@ -865,6 +874,11 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         StatusText = abilitiesUsedInGcdWindow >= MaxAbilitiesPerGcdWindow
             ? "等待 GCD 转好"
             : "等待可执行状态";
+        if (basicComboAttempted)
+        {
+            return;
+        }
+
         NextActionName = "-";
         NextActionReason = abilitiesUsedInGcdWindow >= MaxAbilitiesPerGcdWindow
             ? "本 GCD 窗口已放满 2 个能力技，等待 GCD"
@@ -1232,23 +1246,19 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return false;
         }
 
-        var availability = BeastmasterActionHelper.GetAvailability(actionId, target.GameObjectId);
-        NextActionReason = availability.Reason;
-        if (!availability.CanUse)
+        var actionStatus = actionManager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
+        if (!actionManager->UseAction(ActionType.Action, actionId, target.GameObjectId))
         {
-            ReportAutoOutputDiagnostic(NextActionName, availability.Reason, availability.Reason);
+            NextActionReason = $"技能请求失败（状态码 {actionStatus}，距离 {distance:0.##}/{range:0.##} yalms）";
+            ReportAutoOutputDiagnostic(NextActionName, NextActionReason, $"status-{actionStatus}");
+            nextActionUtc = now.AddMilliseconds(250);
             return false;
         }
 
-        var actionStatus = actionManager->GetActionStatus(ActionType.Action, availability.ActionId, target.GameObjectId);
-        if (actionStatus != 0
-            || !actionManager->UseAction(ActionType.Action, availability.ActionId, target.GameObjectId))
-        {
-            ReportAutoOutputDiagnostic(NextActionName, $"技能系统状态码 {actionStatus}", $"status-{actionStatus}");
-            return false;
-        }
-
-        ReportAutoOutputSuccess(NextActionName, availability.ActionId);
+        NextActionReason = actionStatus == 0
+            ? "基础连击（1→2→3）"
+            : $"已绕过不一致的技能状态码 {actionStatus}";
+        ReportAutoOutputSuccess(NextActionName, actionId);
         nextActionUtc = now.AddMilliseconds(250);
         return true;
     }
