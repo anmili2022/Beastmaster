@@ -2385,10 +2385,10 @@ public sealed class PluginUI
             return;
         }
 
-        DrawGuideFloor("第一盘", BeastmasterArenaGuide.Round1);
+        DrawGuideFloor("第一盘", BeastmasterArenaGuide.Round1, BeastmasterArenaGuide.Round1Author);
         DrawGuideFloor("第二盘", BeastmasterArenaGuide.Round2, BeastmasterArenaGuide.Round2Author);
         DrawGuideFloor("第三盘", BeastmasterArenaGuide.Round3, BeastmasterArenaGuide.Round3Author);
-        DrawGuideFloor("高段第一盘", BeastmasterArenaGuide.HighRound1);
+        DrawGuideFloor("高段第一盘", BeastmasterArenaGuide.HighRound1, BeastmasterArenaGuide.HighRound1Author);
         DrawGuideFloor("高段第二盘", BeastmasterArenaGuide.HighRound2, BeastmasterArenaGuide.HighRound2Author);
 
         ImGui.EndTabBar();
