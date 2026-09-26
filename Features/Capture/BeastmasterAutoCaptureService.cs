@@ -641,12 +641,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             ResetAutoWhistle();
         }
 
-        if (configuration.AutoWhistleEnabled
-            && TryUseAutoWhistle(actionManager, gauge, now))
-        {
-            return;
-        }
-
         // 暂时禁用兽笛循环连招入口，保留实现以便后续恢复。
         // if ((configuration.WhistleRotationEnabled || whistleRotationWaitingForCooldown || whistleRotationStage >= 0)
         //     && TryRunWhistleRotation(actionManager, target, now))
@@ -656,6 +650,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (target is null)
         {
+            if (configuration.AutoWhistleEnabled
+                && TryUseAutoWhistle(actionManager, gauge, now))
+            {
+                return;
+            }
+
             StatusText = "等待当前敌对目标";
             NextActionName = "-";
             NextActionReason = "没有有效的 BattleNpc 目标";
@@ -689,6 +689,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (!configuration.ActiveAttackEnabled && !DalamudApi.Condition[ConditionFlag.InCombat])
         {
+            if (configuration.AutoWhistleEnabled
+                && TryUseAutoWhistle(actionManager, gauge, now))
+            {
+                return;
+            }
+
             StatusText = "等待进入战斗";
             NextActionName = "-";
             NextActionReason = "主动攻击已关闭，未进战时不攻击或捕获";
@@ -728,6 +734,17 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             StatusText = "等待可执行状态";
             NextActionName = "-";
             NextActionReason = "技能动画锁中";
+            return;
+        }
+
+        if (TryUseCapture(actionManager, player, target, canCapture, hasOwnCapture, now))
+        {
+            return;
+        }
+
+        if (configuration.AutoWhistleEnabled
+            && TryUseAutoWhistle(actionManager, gauge, now))
+        {
             return;
         }
 
@@ -796,12 +813,6 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
             if (gcdRemaining > CooperationMinimumGcdRemaining
                 && TryUseCooperationFirstStage(actionManager, gauge, player, target, now))
-            {
-                abilitiesUsedInGcdWindow++;
-                return;
-            }
-
-            if (TryUseCapture(actionManager, player, target, canCapture, hasOwnCapture, now))
             {
                 abilitiesUsedInGcdWindow++;
                 return;
@@ -1860,7 +1871,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         BeastmasterGaugeSnapshot gauge,
         DateTime now)
     {
-        var hasSummon = gauge.SummonEntry != null || gauge.WhistleIndex is >= 1 and <= 3;
+        // 兽笛编号在召唤兽死亡后可能仍保留，不能据此判断当前还有存活召唤兽。
+        var hasSummon = gauge.SummonEntry != null;
         if (hasSummon)
         {
             ResetAutoWhistle();
