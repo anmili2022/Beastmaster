@@ -39,16 +39,25 @@ public sealed class BeastmasterSequenceDefinition
         }
 
         var previousTime = float.PositiveInfinity;
-        foreach (var step in CountdownSteps)
+        for (var index = 0; index < CountdownSteps.Count; index++)
         {
+            var step = CountdownSteps[index];
             var time = step.TimeSeconds ?? float.NaN;
-            if (!float.IsFinite(time) || time > 0f || time < -60f || Math.Abs(time) >= previousTime)
+            if (!float.IsFinite(time) || time > 0f || time < -60f)
             {
-                error = "倒计时步骤必须按 T-时间从大到小排列，范围为 T-60 至 T-0，且不能重复时间。";
+                error = $"倒计时第 {index + 1} 步时间无效，必须在 T-60 至 T-0 之间。";
                 return false;
             }
 
-            previousTime = Math.Abs(time);
+            var absoluteTime = Math.Abs(time);
+            if (absoluteTime >= previousTime)
+            {
+                error = $"倒计时第 {index + 1} 步时间 T-{absoluteTime:0.#} 必须小于上一步的 T-{previousTime:0.#}"
+                    + "（需按 T-时间从大到小排列，且不能重复时间）。";
+                return false;
+            }
+
+            previousTime = absoluteTime;
             if (!SupportedActionIds.Contains(step.ActionId))
             {
                 error = $"倒计时阶段包含不支持的技能：{step.ActionId}。";

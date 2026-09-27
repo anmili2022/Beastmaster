@@ -919,6 +919,11 @@ public sealed class PluginUI
         DrawSequenceStepList("倒计时", sequence.CountdownSteps, true);
         DrawSequenceStepList("进入战斗", sequence.CombatSteps, false);
 
+        if (!sequence.TryValidate(out var sequenceError))
+        {
+            ImGui.TextColored(new Vector4(1f, 0.4f, 0.3f, 1f), $"序列错误：{sequenceError}");
+        }
+
         if (ImGui.Button("复制导出文本")) ImGui.SetClipboardText(sequence.Export());
         ImGui.SameLine();
         if (ImGui.Button("从剪贴板导入"))
@@ -947,9 +952,11 @@ public sealed class PluginUI
                 var style = ImGui.GetStyle();
                 var timeInputWidth = Math.Max(
                     130f,
-                    ImGui.CalcTextSize("T-60.0").X + style.FramePadding.X * 2f);
+                    ImGui.CalcTextSize("60.0").X + style.FramePadding.X * 2f);
+                ImGui.Text("T-");
+                ImGui.SameLine();
                 ImGui.SetNextItemWidth(timeInputWidth);
-                if (ImGui.InputFloat("时间", ref time, 0f, 0f, "T-%.1f"))
+                if (ImGui.InputFloat("时间", ref time, 0f, 0f, "%.1f"))
                 {
                     step.TimeSeconds = -Math.Clamp(Math.Abs(time), 0f, 60f);
                     configuration.Save();
