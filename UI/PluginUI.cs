@@ -909,6 +909,12 @@ public sealed class PluginUI
             sequences[selected] = BeastmasterSequenceDefinition.CreateWaterOpener();
             configuration.Save();
         }
+        ImGui.SameLine();
+        if (ImGui.Button("恢复爬塔模版"))
+        {
+            sequences[selected] = BeastmasterSequenceDefinition.CreateTowerClimbTemplate();
+            configuration.Save();
+        }
 
         DrawSequenceStepList("倒计时", sequence.CountdownSteps, true);
         DrawSequenceStepList("进入战斗", sequence.CombatSteps, false);

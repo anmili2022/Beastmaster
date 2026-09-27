@@ -94,6 +94,21 @@ public sealed class BeastmasterSequenceDefinition
             ],
         };
 
+    public static BeastmasterSequenceDefinition CreateTowerClimbTemplate()
+        => new()
+        {
+            Name = "爬塔模版序列",
+            Description = "爬塔模版-推荐螳螂胡峰库西",
+            CountdownSteps =
+            [
+                new(0, 44893, "盾牌冲击"),
+            ],
+            CombatSteps =
+            [
+                new(null, 44879, "碎击斩"),
+            ],
+        };
+
     public static BeastmasterSequenceDefinition CreateTestSequence()
         => new()
         {
