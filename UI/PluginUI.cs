@@ -564,7 +564,7 @@ public sealed class PluginUI
             GetThirdFormActionName(gaugeSnapshot),
             thirdFormEnabled,
             GetThirdFormReason(gaugeSnapshot));
-        ImGui.TextDisabled($"释放：运行时调整技能（{(configuration.AutoReleaseEnabled ? "开启" : "关闭")}）");
+        ImGui.TextDisabled($"释放：运行时调整技能（{(autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Release) ? "开启" : "关闭")}）");
         if (ImGui.Button($"手动释放大招##manual-ultimate-overlay"))
         {
             autoCaptureService.TryUseUltimate();
@@ -1283,7 +1283,7 @@ public sealed class PluginUI
 
         var actionType = (int)rule.ActionType;
         ImGui.SetNextItemWidth(120f);
-        if (ImGui.Combo("执行方式", ref actionType, "技能\0奇弈道具\0"))
+        if (ImGui.Combo("执行方式", ref actionType, "技能\0奇弈道具\0自动输出管理\0"))
         {
             rule.ActionType = (BeastmasterRuleActionType)actionType;
             configuration.Save();
@@ -1349,6 +1349,10 @@ public sealed class PluginUI
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip(BeastmasterRuleActions.GetCrucibleItemDescription(selectedItemId));
             }
         }
+        else if (rule.ActionType == BeastmasterRuleActionType.AutoOutput)
+        {
+            DrawRuleAutoOutputFields(rule);
+        }
         else
         {
             var actionIndex = Array.FindIndex(BeastmasterRuleActions.Supported, action => action.ActionId == rule.ActionId);
@@ -1366,11 +1370,118 @@ public sealed class PluginUI
         ImGui.TextDisabled("目标技能始终对当前手动目标释放；DataID 对象只负责触发。技能失败后回退 ACR。");
     }
 
+    private void DrawRuleAutoOutputFields(BeastmasterRuleDefinition rule)
+    {
+        var target = rule.AutoOutputTarget;
+        ImGui.SetNextItemWidth(220f);
+        if (ImGui.BeginCombo("管理项目", BeastmasterRuleActions.GetAutoOutputTargetName(target)))
+        {
+            foreach (var option in Enum.GetValues<BeastmasterRuleAutoOutputTarget>())
+            {
+                var isSelected = option == target;
+                if (ImGui.Selectable(BeastmasterRuleActions.GetAutoOutputTargetName(option), isSelected))
+                {
+                    rule.AutoOutputTarget = option;
+                    configuration.Save();
+                }
+
+                if (isSelected) ImGui.SetItemDefaultFocus();
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(BeastmasterRuleActions.GetAutoOutputTargetDescription(option));
+            }
+
+            ImGui.EndCombo();
+        }
+
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(BeastmasterRuleActions.GetAutoOutputTargetDescription(target));
+
+        var enabled = rule.AutoOutputEnabled;
+        if (ImGui.Checkbox("开启该功能块", ref enabled))
+        {
+            rule.AutoOutputEnabled = enabled;
+            configuration.Save();
+        }
+
+        if (!BeastmasterRuleDefinition.IsAutoOutputWhistleTarget(target))
+        {
+            ImGui.TextDisabled("仅修改开关；本场战斗持续生效，战斗结束后恢复原设置。");
+            return;
+        }
+
+        DrawRuleAutoOutputWhistle(rule, "1 笛", 0);
+        DrawRuleAutoOutputWhistle(rule, "2 笛", 1);
+        DrawRuleAutoOutputWhistle(rule, "3 笛", 2);
+
+        var autoOption = rule.AutoOutputOption;
+        var optionLabel = target == BeastmasterRuleAutoOutputTarget.FinalStrike ? "等待释放" : "只打 BOSS";
+        if (ImGui.Checkbox(optionLabel, ref autoOption))
+        {
+            rule.AutoOutputOption = autoOption;
+            configuration.Save();
+        }
+
+        ImGui.TextDisabled(target == BeastmasterRuleAutoOutputTarget.FinalStrike
+            ? "整体设置最后一击总开关、三笛开关与血量阈值、等待释放；本场战斗持续生效。"
+            : "整体设置释放总开关、三笛开关与目标血量阈值、只打 BOSS；本场战斗持续生效。");
+    }
+
+    private void DrawRuleAutoOutputWhistle(BeastmasterRuleDefinition rule, string label, int index)
+    {
+        var enabled = index switch
+        {
+            0 => rule.AutoOutputWhistleOneEnabled,
+            1 => rule.AutoOutputWhistleTwoEnabled,
+            _ => rule.AutoOutputWhistleThreeEnabled,
+        };
+        var threshold = index switch
+        {
+            0 => rule.AutoOutputWhistleOneThreshold,
+            1 => rule.AutoOutputWhistleTwoThreshold,
+            _ => rule.AutoOutputWhistleThreeThreshold,
+        };
+
+        ImGui.PushID($"rule-auto-output-whistle-{index}");
+        if (ImGui.Checkbox(label, ref enabled))
+        {
+            SetRuleAutoOutputWhistleEnabled(rule, index, enabled);
+            configuration.Save();
+        }
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(90f);
+        if (ImGui.DragFloat("##threshold", ref threshold, 0.5f, 1f, 100f, "%.0f%%"))
+        {
+            SetRuleAutoOutputWhistleThreshold(rule, index, Math.Clamp(threshold, 1f, 100f));
+            configuration.Save();
+        }
+
+        ImGui.PopID();
+    }
+
+    private static void SetRuleAutoOutputWhistleEnabled(BeastmasterRuleDefinition rule, int index, bool value)
+    {
+        switch (index)
+        {
+            case 0: rule.AutoOutputWhistleOneEnabled = value; break;
+            case 1: rule.AutoOutputWhistleTwoEnabled = value; break;
+            default: rule.AutoOutputWhistleThreeEnabled = value; break;
+        }
+    }
+
+    private static void SetRuleAutoOutputWhistleThreshold(BeastmasterRuleDefinition rule, int index, float value)
+    {
+        switch (index)
+        {
+            case 0: rule.AutoOutputWhistleOneThreshold = value; break;
+            case 1: rule.AutoOutputWhistleTwoThreshold = value; break;
+            default: rule.AutoOutputWhistleThreeThreshold = value; break;
+        }
+    }
+
     private void DrawRuleConditionFields(BeastmasterRuleDefinition rule, BeastmasterRuleCondition condition, int index)
     {
         var type = (int)condition.Type;
         ImGui.SetNextItemWidth(190f);
-        if (ImGui.Combo($"检测类型##condition-{index}", ref type, "自身 BUFF\0目标 BUFF\0DataID BUFF\0DataID 读条\0目标读条\0目标 DATAID\0自身血量\0目标血量\0目标为 BOSS（IsBoss）\0当前兽笛\0"))
+        if (ImGui.Combo($"检测类型##condition-{index}", ref type, "自身 BUFF\0目标 BUFF\0DataID BUFF\0DataID 读条\0目标读条\0目标 DATAID\0自身血量\0目标血量\0目标为 BOSS（IsBoss）\0当前兽笛\0驯兽师量谱\0"))
         {
             condition.Type = (BeastmasterRuleConditionType)type;
             rule.SyncLegacyFieldsFromFirstCondition();
@@ -1381,11 +1492,34 @@ public sealed class PluginUI
         {
             var statusCondition = (int)condition.StatusCondition;
             ImGui.SetNextItemWidth(190f);
-            if (ImGui.Combo($"BUFF 条件##condition-{index}", ref statusCondition, "存在\0缺失\0"))
+            if (ImGui.Combo($"BUFF 条件##condition-{index}", ref statusCondition, "存在\0缺失\0剩余时间\0"))
             {
                 condition.StatusCondition = (BeastmasterRuleStatusCondition)statusCondition;
                 rule.SyncLegacyFieldsFromFirstCondition();
                 configuration.Save();
+            }
+
+            if (condition.StatusCondition == BeastmasterRuleStatusCondition.RemainingTime)
+            {
+                var comparison = (int)condition.RemainingTimeComparison;
+                ImGui.SetNextItemWidth(120f);
+                if (ImGui.Combo($"剩余时间比较##condition-{index}", ref comparison, "大于\0小于\0"))
+                {
+                    condition.RemainingTimeComparison = (BeastmasterRuleHpCondition)comparison;
+                    rule.SyncLegacyFieldsFromFirstCondition();
+                    configuration.Save();
+                }
+
+                var seconds = condition.RemainingTimeSeconds;
+                ImGui.SetNextItemWidth(140f);
+                if (ImGui.InputFloat($"剩余时间（秒）##condition-{index}", ref seconds, 0f, 0f, "%.2f"))
+                {
+                    condition.RemainingTimeSeconds = Math.Clamp(seconds, 0f, 999f);
+                    rule.SyncLegacyFieldsFromFirstCondition();
+                    configuration.Save();
+                }
+
+                ImGui.TextDisabled("目标没有该 BUFF 时视为不满足。");
             }
         }
 
@@ -1432,6 +1566,43 @@ public sealed class PluginUI
                 configuration.Save();
             }
         }
+        else if (condition.Type == BeastmasterRuleConditionType.Gauge)
+        {
+            var gaugeTarget = (int)condition.GaugeTarget;
+            ImGui.SetNextItemWidth(190f);
+            if (ImGui.Combo($"量谱项目##condition-{index}", ref gaugeTarget, "黄豆（御兽之心）\0蓝豆（兽灵之心）\0技力\0兽力\0"))
+            {
+                condition.GaugeTarget = (BeastmasterRuleGaugeTarget)gaugeTarget;
+                rule.SyncLegacyFieldsFromFirstCondition();
+                configuration.Save();
+            }
+
+            var gaugeComparison = (int)condition.GaugeComparison;
+            ImGui.SetNextItemWidth(120f);
+            if (ImGui.Combo($"量谱比较##condition-{index}", ref gaugeComparison, "大于等于\0小于等于\0"))
+            {
+                condition.GaugeComparison = (BeastmasterRuleGaugeComparison)gaugeComparison;
+                rule.SyncLegacyFieldsFromFirstCondition();
+                configuration.Save();
+            }
+
+            var maxGauge = condition.GaugeTarget is BeastmasterRuleGaugeTarget.BeastHeart or BeastmasterRuleGaugeTarget.BeastSoul ? 3
+                : BeastmasterGaugeSnapshot.MaximumGauge;
+            var gaugeThreshold = condition.GaugeThreshold;
+            ImGui.SetNextItemWidth(140f);
+            if (ImGui.InputInt($"量谱阈值##condition-{index}", ref gaugeThreshold, 1, 10))
+            {
+                condition.GaugeThreshold = Math.Clamp(gaugeThreshold, 0, maxGauge);
+                rule.SyncLegacyFieldsFromFirstCondition();
+                configuration.Save();
+            }
+
+            ImGui.SameLine();
+            ImGui.TextDisabled(condition.GaugeTarget is BeastmasterRuleGaugeTarget.BeastHeart or BeastmasterRuleGaugeTarget.BeastSoul
+                ? $"0~{maxGauge} 层"
+                : $"0~{maxGauge}");
+            ImGui.TextDisabled("量谱未读取或当前不是驯兽师时不满足。");
+        }
         else if (condition.Type is not (BeastmasterRuleConditionType.TargetDataId or BeastmasterRuleConditionType.TargetIsBoss))
         {
             var conditionId = (int)Math.Min(condition.ConditionId, int.MaxValue);
@@ -1462,12 +1633,20 @@ public sealed class PluginUI
                 ConditionId = condition.ConditionId,
                 HpCondition = condition.HpCondition,
                 HpThreshold = condition.HpThreshold,
+                RemainingTimeComparison = condition.RemainingTimeComparison,
+                RemainingTimeSeconds = condition.RemainingTimeSeconds,
+                GaugeTarget = condition.GaugeTarget,
+                GaugeComparison = condition.GaugeComparison,
+                GaugeThreshold = condition.GaugeThreshold,
                 WhistleIndex = condition.WhistleIndex,
             }).ToList(),
             DataId = source.DataId,
             ConditionId = source.ConditionId,
             HpCondition = source.HpCondition,
             HpThreshold = source.HpThreshold,
+            GaugeTarget = source.GaugeTarget,
+            GaugeComparison = source.GaugeComparison,
+            GaugeThreshold = source.GaugeThreshold,
             WhistleIndex = source.WhistleIndex,
             ActionType = source.ActionType,
             ActionId = source.ActionId,
@@ -1483,6 +1662,8 @@ public sealed class PluginUI
             rule.Conditions.Select(GetRuleConditionSummary));
         if (rule.ActionType == BeastmasterRuleActionType.CrucibleItem)
             return $"{condition} -> 道具 {BeastmasterRuleActions.GetCrucibleItemTypeName(rule.CrucibleItemType)}";
+        if (rule.ActionType == BeastmasterRuleActionType.AutoOutput)
+            return $"{condition} -> 自动输出 {BeastmasterRuleActions.GetAutoOutputTargetName(rule.AutoOutputTarget)} {(rule.AutoOutputEnabled ? "开" : "关")}";
         var action = BeastmasterRuleActions.Supported.FirstOrDefault(item => item.ActionId == rule.ActionId);
         return $"{condition} -> {(string.IsNullOrEmpty(action.Name) ? rule.ActionId.ToString() : action.Name)}";
     }
@@ -1501,16 +1682,28 @@ public sealed class PluginUI
             BeastmasterRuleConditionType.TargetHp => "目标血量",
             BeastmasterRuleConditionType.TargetIsBoss => "目标为 BOSS",
             BeastmasterRuleConditionType.CurrentWhistle => $"当前{condition.WhistleIndex}笛",
+            BeastmasterRuleConditionType.Gauge => $"量谱 {BeastmasterRuleActions.GetGaugeTargetName(condition.GaugeTarget)}",
             _ => "未知",
         };
         if (condition.IsStatusRule)
+        {
+            if (condition.StatusCondition == BeastmasterRuleStatusCondition.RemainingTime)
+            {
+                return $"{actor} BUFF {condition.ConditionId} 剩余时间 "
+                    + $"{(condition.RemainingTimeComparison == BeastmasterRuleHpCondition.Above ? ">" : "<")} {condition.RemainingTimeSeconds:0.##} 秒";
+            }
+
             return $"{actor}{(condition.StatusCondition == BeastmasterRuleStatusCondition.Present ? "存在" : "缺少")} BUFF {condition.ConditionId}";
+        }
         if (condition.Type == BeastmasterRuleConditionType.TargetDataId)
             return actor;
         if (condition.Type == BeastmasterRuleConditionType.TargetIsBoss)
             return "目标最大血量 > 自身最大血量 × 5";
         if (condition.Type == BeastmasterRuleConditionType.CurrentWhistle)
             return $"当前为 {condition.WhistleIndex} 笛";
+        if (condition.Type == BeastmasterRuleConditionType.Gauge)
+            return $"{BeastmasterRuleActions.GetGaugeTargetName(condition.GaugeTarget)} "
+                + $"{BeastmasterRuleActions.GetGaugeComparisonText(condition.GaugeComparison)} {condition.GaugeThreshold}";
         if (condition.IsHealthRule)
             return $"{actor} {(condition.HpCondition == BeastmasterRuleHpCondition.Above ? ">" : "<")} {condition.HpThreshold:0.#}%";
         return $"{actor}读条 {condition.ConditionId}";
@@ -2942,76 +3135,76 @@ public sealed class PluginUI
             if (configuration.OverlayThreeColumnMode)
             {
                 var threeColumn = 0;
-                DrawOverlayAdvancedToggle("御兽协作", configuration.BeastHeartCooperationEnabled, () => ToggleCooperation(true), "御兽协作（黄豆）", ref threeColumn, columnCount: 3);
-                DrawOverlayAdvancedToggle("兽灵协作", configuration.BeastSoulCooperationEnabled, () => ToggleCooperation(false), "兽灵协作（蓝豆）", ref threeColumn, columnCount: 3);
-                DrawOverlayAdvancedToggle("鼓劲", configuration.AutoDrumEnabled, () => ToggleBoolean(nameof(configuration.AutoDrumEnabled)), "鼓劲 · 好了就放", ref threeColumn, columnCount: 3);
-                DrawOverlayAdvancedToggle("万象·物理", configuration.PhysicalThirdFormEnabled, () => ToggleThirdForm(true), "万象流转（物理）", ref threeColumn, columnCount: 3);
-                DrawOverlayAdvancedToggle("万象·魔法", configuration.MagicalThirdFormEnabled, () => ToggleThirdForm(false), "万象流转（魔法）", ref threeColumn, columnCount: 3);
-                DrawOverlayAdvancedToggle("声援", configuration.AutoCheerEnabled, () => ToggleBoolean(nameof(configuration.AutoCheerEnabled)), "声援 · 好了就放", ref threeColumn, columnCount: 3);
-                DrawOverlayAdvancedToggle("自动兽笛", configuration.AutoWhistleEnabled, () => ToggleBoolean(nameof(configuration.AutoWhistleEnabled)), "自动兽笛", ref threeColumn, columnCount: 3);
-                DrawOverlayAdvancedToggle("最后一击", configuration.AutoFinalStrikeEnabled, () => autoCaptureService.SetFinalStrikeEnabled(!configuration.AutoFinalStrikeEnabled), "最后一击", ref threeColumn, columnCount: 3);
-                DrawOverlayAdvancedToggle("释放", configuration.AutoReleaseEnabled, () => ToggleBoolean(nameof(configuration.AutoReleaseEnabled)), "释放 · 好了就放", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("御兽协作", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.BeastHeartCooperation), () => ToggleCooperation(true), "御兽协作（黄豆）", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("兽灵协作", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.BeastSoulCooperation), () => ToggleCooperation(false), "兽灵协作（蓝豆）", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("鼓劲", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Drum), () => ToggleBoolean(nameof(configuration.AutoDrumEnabled)), "鼓劲 · 好了就放", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("万象·物理", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.PhysicalThirdForm), () => ToggleThirdForm(true), "万象流转（物理）", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("万象·魔法", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.MagicalThirdForm), () => ToggleThirdForm(false), "万象流转（魔法）", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("声援", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Cheer), () => ToggleBoolean(nameof(configuration.AutoCheerEnabled)), "声援 · 好了就放", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("自动兽笛", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.AutoWhistle), () => ToggleBoolean(nameof(configuration.AutoWhistleEnabled)), "自动兽笛", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("最后一击", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.FinalStrike), () => autoCaptureService.SetFinalStrikeEnabled(!configuration.AutoFinalStrikeEnabled), "最后一击", ref threeColumn, columnCount: 3);
+                DrawOverlayAdvancedToggle("释放", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Release), () => ToggleBoolean(nameof(configuration.AutoReleaseEnabled)), "释放 · 好了就放", ref threeColumn, columnCount: 3);
                 DrawOverlayAdvancedToggle("持续吸引", IsArenaRuleEnabled(46751, 2413), () => ToggleArenaRule(46751, 2413), "持续吸引", ref threeColumn, columnCount: 3, yellowWhenEnabled: true);
                 DrawOverlayAdvancedToggle("持续挑衅", IsArenaRuleEnabled(46750, 5586), () => ToggleArenaRule(46750, 5586), "持续挑衅", ref threeColumn, columnCount: 3, yellowWhenEnabled: true);
-                DrawOverlayAdvancedToggle("安全盾牌", configuration.AutoSafeShieldEnabled, () => ToggleBoolean(nameof(configuration.AutoSafeShieldEnabled)), "安全盾牌：玩家到目标不超过 3 yalms 且盾牌冲击可用时自动使用。", ref threeColumn, columnCount: 3, yellowWhenEnabled: true);
+                DrawOverlayAdvancedToggle("安全盾牌", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.SafeShield), () => ToggleBoolean(nameof(configuration.AutoSafeShieldEnabled)), "安全盾牌：玩家到目标不超过 3 yalms 且盾牌冲击可用时自动使用。", ref threeColumn, columnCount: 3, yellowWhenEnabled: true);
                 return;
             }
 
             var column = 0;
-            DrawOverlayAdvancedToggle("御兽协作", configuration.BeastHeartCooperationEnabled,
+            DrawOverlayAdvancedToggle("御兽协作", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.BeastHeartCooperation),
                 () =>
                 {
                     configuration.BeastHeartCooperationEnabled = !configuration.BeastHeartCooperationEnabled;
                     if (configuration.BeastHeartCooperationEnabled) configuration.BeastSoulCooperationEnabled = false;
                     configuration.Save();
                 }, "御兽协作（黄豆）", ref column);
-            DrawOverlayAdvancedToggle("兽灵协作", configuration.BeastSoulCooperationEnabled,
+            DrawOverlayAdvancedToggle("兽灵协作", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.BeastSoulCooperation),
                 () =>
                 {
                     configuration.BeastSoulCooperationEnabled = !configuration.BeastSoulCooperationEnabled;
                     if (configuration.BeastSoulCooperationEnabled) configuration.BeastHeartCooperationEnabled = false;
                     configuration.Save();
                 }, "兽灵协作（蓝豆）", ref column);
-            DrawOverlayAdvancedToggle("万象·物理", configuration.PhysicalThirdFormEnabled,
+            DrawOverlayAdvancedToggle("万象·物理", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.PhysicalThirdForm),
                 () =>
                 {
                     configuration.PhysicalThirdFormEnabled = !configuration.PhysicalThirdFormEnabled;
                     if (configuration.PhysicalThirdFormEnabled) configuration.MagicalThirdFormEnabled = false;
                     configuration.Save();
                 }, "万象流转（物理）", ref column);
-            DrawOverlayAdvancedToggle("万象·魔法", configuration.MagicalThirdFormEnabled,
+            DrawOverlayAdvancedToggle("万象·魔法", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.MagicalThirdForm),
                 () =>
                 {
                     configuration.MagicalThirdFormEnabled = !configuration.MagicalThirdFormEnabled;
                     if (configuration.MagicalThirdFormEnabled) configuration.PhysicalThirdFormEnabled = false;
                     configuration.Save();
                 }, "万象流转（魔法）", ref column);
-            DrawOverlayAdvancedToggle("鼓劲", configuration.AutoDrumEnabled,
+            DrawOverlayAdvancedToggle("鼓劲", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Drum),
                 () =>
                 {
                     configuration.AutoDrumEnabled = !configuration.AutoDrumEnabled;
                     configuration.Save();
                 }, "鼓劲 · 好了就放：御兽之心为 0 时正常判断；御兽之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用鼓劲（44905）。", ref column);
-            DrawOverlayAdvancedToggle("声援", configuration.AutoCheerEnabled,
+            DrawOverlayAdvancedToggle("声援", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Cheer),
                 () =>
                 {
                     configuration.AutoCheerEnabled = !configuration.AutoCheerEnabled;
                     configuration.Save();
                 }, "声援 · 好了就放：兽灵之心为 0 时正常判断；兽灵之心大于 0 时，只有开启万象流转（物理或魔法）才继续判断。技能系统允许时自动使用声援（44904）。", ref column);
-            DrawOverlayAdvancedToggle("自动兽笛", configuration.AutoWhistleEnabled,
+            DrawOverlayAdvancedToggle("自动兽笛", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.AutoWhistle),
                 () =>
                 {
                     configuration.AutoWhistleEnabled = !configuration.AutoWhistleEnabled;
                     configuration.Save();
                 }, "当前没有魔兽时，按兽笛 1→2→3 使用首个可用技能；请求后等待 1 秒确认召唤，避免连续误用下一支兽笛。", ref column);
-            DrawOverlayAdvancedToggle("安全盾牌", configuration.AutoSafeShieldEnabled, () => ToggleBoolean(nameof(configuration.AutoSafeShieldEnabled)), "安全盾牌：玩家到目标不超过 3 yalms 且盾牌冲击可用时自动使用。", ref column, yellowWhenEnabled: true);
-            DrawOverlayAdvancedToggle("释放", configuration.AutoReleaseEnabled,
+            DrawOverlayAdvancedToggle("安全盾牌", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.SafeShield), () => ToggleBoolean(nameof(configuration.AutoSafeShieldEnabled)), "安全盾牌：玩家到目标不超过 3 yalms 且盾牌冲击可用时自动使用。", ref column, yellowWhenEnabled: true);
+            DrawOverlayAdvancedToggle("释放", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Release),
                 () =>
                 {
                     configuration.AutoReleaseEnabled = !configuration.AutoReleaseEnabled;
                     configuration.Save();
                 }, "释放 · 好了就放：技能系统允许且召唤兽进入释放距离时自动使用释放。", ref column);
-            DrawOverlayAdvancedToggle("最后一击", configuration.AutoFinalStrikeEnabled,
+            DrawOverlayAdvancedToggle("最后一击", autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.FinalStrike),
                 () => autoCaptureService.SetFinalStrikeEnabled(!configuration.AutoFinalStrikeEnabled),
                 "最后一击总开关。1、2、3 笛独立开关和宝宝血量阈值请在自动输出页面设置；开启“等待释放”时，会等待当前魔兽先使用释放。",
                 ref column);
@@ -3080,7 +3273,7 @@ public sealed class PluginUI
             ImGui.SetTooltip("万象流转·魔法");
         }
 
-        var autoWhistleEnabled = configuration.AutoWhistleEnabled;
+        var autoWhistleEnabled = autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.AutoWhistle);
         if (ImGui.Checkbox("自动兽笛", ref autoWhistleEnabled))
         {
             configuration.AutoWhistleEnabled = autoWhistleEnabled;
@@ -3091,12 +3284,12 @@ public sealed class PluginUI
             ImGui.SetTooltip("当前没有魔兽时，按兽笛 1→2→3 使用首个可用技能；释放后等待 1 秒确认召唤。");
         }
 
-        DrawCompactSettingCheckbox("鼓劲", "鼓劲 · 好了就放：御兽之心为 0 时判断；御兽之心为 3 且技力为 0 时也判断。技能系统允许时自动使用鼓劲（44905）。", nameof(configuration.AutoDrumEnabled), configuration.AutoDrumEnabled);
-        DrawCompactSettingCheckbox("声援", "声援 · 好了就放：兽灵之心为 0 时判断；兽灵之心为 3 且兽力为 0 时也判断。技能系统允许时自动使用声援（44904）。", nameof(configuration.AutoCheerEnabled), configuration.AutoCheerEnabled);
-        DrawCompactSettingCheckbox("借用", "借用 · 好了就放：借用当前魔兽的本能技能（44895），借用后魔兽技变为借用技能。默认关闭，暂不参与自动输出。", nameof(configuration.AutoBorrowEnabled), configuration.AutoBorrowEnabled);
-        DrawCompactSettingCheckbox("魔兽技", "魔兽技 · 好了就放：释放借用后的本能技能（44886 调整后）。默认关闭，暂不参与自动输出。", nameof(configuration.AutoBeastSkillEnabled), configuration.AutoBeastSkillEnabled);
+        DrawCompactSettingCheckbox("鼓劲", "鼓劲 · 好了就放：御兽之心为 0 时判断；御兽之心为 3 且技力为 0 时也判断。技能系统允许时自动使用鼓劲（44905）。", nameof(configuration.AutoDrumEnabled), autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Drum));
+        DrawCompactSettingCheckbox("声援", "声援 · 好了就放：兽灵之心为 0 时判断；兽灵之心为 3 且兽力为 0 时也判断。技能系统允许时自动使用声援（44904）。", nameof(configuration.AutoCheerEnabled), autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Cheer));
+        DrawCompactSettingCheckbox("借用", "借用 · 好了就放：借用当前魔兽的本能技能（44895），借用后魔兽技变为借用技能。默认关闭，暂不参与自动输出。", nameof(configuration.AutoBorrowEnabled), autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Borrow));
+        DrawCompactSettingCheckbox("魔兽技", "魔兽技 · 好了就放：释放借用后的本能技能（44886 调整后）。默认关闭，暂不参与自动输出。", nameof(configuration.AutoBeastSkillEnabled), autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.BeastSkill));
 
-        var autoRecoveryItemEnabled = configuration.AutoRecoveryItemEnabled;
+        var autoRecoveryItemEnabled = autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.RecoveryItem);
         if (ImGui.Checkbox("低血量自动使用恢复药", ref autoRecoveryItemEnabled))
         {
             configuration.AutoRecoveryItemEnabled = autoRecoveryItemEnabled;
@@ -3155,7 +3348,7 @@ public sealed class PluginUI
             }
         }
 
-        var releaseEnabled = configuration.AutoReleaseEnabled;
+        var releaseEnabled = autoCaptureService.GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget.Release);
         if (ImGui.Checkbox("释放", ref releaseEnabled))
         {
             configuration.AutoReleaseEnabled = releaseEnabled;

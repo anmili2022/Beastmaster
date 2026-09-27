@@ -15,12 +15,28 @@ public enum BeastmasterRuleConditionType
     TargetHp,
     TargetIsBoss,
     CurrentWhistle,
+    Gauge,
+}
+
+public enum BeastmasterRuleGaugeTarget
+{
+    BeastHeart,
+    BeastSoul,
+    Tp,
+    BeastPower,
+}
+
+public enum BeastmasterRuleGaugeComparison
+{
+    GreaterOrEqual,
+    LessOrEqual,
 }
 
 public enum BeastmasterRuleActionType
 {
     Skill,
     CrucibleItem,
+    AutoOutput,
 }
 
 public enum BeastmasterCrucibleItemType
@@ -42,6 +58,7 @@ public enum BeastmasterRuleStatusCondition
 {
     Present,
     Missing,
+    RemainingTime,
 }
 
 public enum BeastmasterRuleHpCondition
@@ -85,9 +102,23 @@ public sealed class BeastmasterRuleDefinition
     public uint ConditionId { get; set; }
     public BeastmasterRuleHpCondition HpCondition { get; set; }
     public float HpThreshold { get; set; } = 50f;
+    public BeastmasterRuleHpCondition RemainingTimeComparison { get; set; }
+    public float RemainingTimeSeconds { get; set; } = 3f;
+    public BeastmasterRuleGaugeTarget GaugeTarget { get; set; }
+    public BeastmasterRuleGaugeComparison GaugeComparison { get; set; }
+    public int GaugeThreshold { get; set; }
     public byte WhistleIndex { get; set; } = 1;
     public uint ActionId { get; set; } = 44879;
     public uint CrucibleItemId { get; set; }
+    public BeastmasterRuleAutoOutputTarget AutoOutputTarget { get; set; } = BeastmasterRuleAutoOutputTarget.BasicCombo;
+    public bool AutoOutputEnabled { get; set; } = true;
+    public bool AutoOutputWhistleOneEnabled { get; set; } = true;
+    public bool AutoOutputWhistleTwoEnabled { get; set; } = true;
+    public bool AutoOutputWhistleThreeEnabled { get; set; } = true;
+    public float AutoOutputWhistleOneThreshold { get; set; } = 20f;
+    public float AutoOutputWhistleTwoThreshold { get; set; } = 20f;
+    public float AutoOutputWhistleThreeThreshold { get; set; } = 20f;
+    public bool AutoOutputOption { get; set; }
 
     public bool TryValidate(out string error)
     {
@@ -124,7 +155,7 @@ public sealed class BeastmasterRuleDefinition
                 }
             }
         }
-        else if (!IsTargetDataIdRule && !IsHealthRule && !IsBossRule && !IsWhistleRule && ConditionId == 0)
+        else if (!IsTargetDataIdRule && !IsHealthRule && !IsBossRule && !IsWhistleRule && !IsGaugeRule && ConditionId == 0)
         {
             error = IsStatusRule ? "BUFFID 必须大于 0。" : "读条 ID 必须大于 0。";
             return false;
@@ -148,6 +179,12 @@ public sealed class BeastmasterRuleDefinition
             return false;
         }
 
+        if (Conditions.Count == 0 && IsGaugeRule && !BeastmasterRuleActions.IsGaugeThresholdValid(GaugeTarget, GaugeThreshold))
+        {
+            error = "量谱阈值超出范围（黄豆/蓝豆 0~3 层，技力/兽力 0~250）。";
+            return false;
+        }
+
         if (ActionType == BeastmasterRuleActionType.Skill && !BeastmasterRuleActions.IsSupported(ActionId))
         {
             error = $"不支持规则技能 {ActionId}。";
@@ -162,8 +199,45 @@ public sealed class BeastmasterRuleDefinition
             return false;
         }
 
+        if (StatusCondition == BeastmasterRuleStatusCondition.RemainingTime
+            && (!float.IsFinite(RemainingTimeSeconds) || RemainingTimeSeconds is < 0f or > 999f))
+        {
+            error = "剩余时间阈值必须在 0~999 秒之间。";
+            return false;
+        }
+
+        if (ConditionType == BeastmasterRuleConditionType.Gauge && !BeastmasterRuleActions.IsGaugeThresholdValid(GaugeTarget, GaugeThreshold))
+        {
+            error = "量谱阈值超出范围（黄豆/蓝豆 0~3 层，技力/兽力 0~250）。";
+            return false;
+        }
+
+        if (ActionType == BeastmasterRuleActionType.AutoOutput && !Enum.IsDefined(AutoOutputTarget))
+        {
+            error = "自动输出管理项目无效。";
+            return false;
+        }
+
+        if (ActionType == BeastmasterRuleActionType.AutoOutput
+            && IsAutoOutputWhistleTarget(AutoOutputTarget)
+            && (AutoOutputWhistleOneThreshold is < 1f or > 100f
+                || AutoOutputWhistleTwoThreshold is < 1f or > 100f
+                || AutoOutputWhistleThreeThreshold is < 1f or > 100f))
+        {
+            error = "自动输出管理血量阈值必须在 1%~100% 之间。";
+            return false;
+        }
+
         return true;
     }
+
+    public static bool IsAutoOutputWhistleTarget(BeastmasterRuleAutoOutputTarget target)
+        => target is BeastmasterRuleAutoOutputTarget.FinalStrike
+            or BeastmasterRuleAutoOutputTarget.Release;
+
+    public static bool IsAutoOutputOptionTarget(BeastmasterRuleAutoOutputTarget target)
+        => target is BeastmasterRuleAutoOutputTarget.FinalStrike
+            or BeastmasterRuleAutoOutputTarget.Release;
 
     public bool IsStatusRule
         => ConditionType is BeastmasterRuleConditionType.SelfStatus
@@ -184,6 +258,9 @@ public sealed class BeastmasterRuleDefinition
     public bool IsWhistleRule
         => ConditionType is BeastmasterRuleConditionType.CurrentWhistle;
 
+    public bool IsGaugeRule
+        => ConditionType is BeastmasterRuleConditionType.Gauge;
+
     public bool IsHealthRule
         => ConditionType is BeastmasterRuleConditionType.SelfHp
             or BeastmasterRuleConditionType.TargetHp;
@@ -201,6 +278,11 @@ public sealed class BeastmasterRuleDefinition
                 ConditionId = ConditionId,
                 HpCondition = HpCondition,
                 HpThreshold = HpThreshold,
+                RemainingTimeComparison = RemainingTimeComparison,
+                RemainingTimeSeconds = RemainingTimeSeconds,
+                GaugeTarget = GaugeTarget,
+                GaugeComparison = GaugeComparison,
+                GaugeThreshold = GaugeThreshold,
                 WhistleIndex = WhistleIndex,
             });
         }
@@ -216,6 +298,11 @@ public sealed class BeastmasterRuleDefinition
         ConditionId = first.ConditionId;
         HpCondition = first.HpCondition;
         HpThreshold = first.HpThreshold;
+        RemainingTimeComparison = first.RemainingTimeComparison;
+        RemainingTimeSeconds = first.RemainingTimeSeconds;
+        GaugeTarget = first.GaugeTarget;
+        GaugeComparison = first.GaugeComparison;
+        GaugeThreshold = first.GaugeThreshold;
         WhistleIndex = first.WhistleIndex;
     }
 
@@ -230,6 +317,11 @@ public sealed class BeastmasterRuleCondition
     public uint ConditionId { get; set; }
     public BeastmasterRuleHpCondition HpCondition { get; set; }
     public float HpThreshold { get; set; } = 50f;
+    public BeastmasterRuleHpCondition RemainingTimeComparison { get; set; }
+    public float RemainingTimeSeconds { get; set; } = 3f;
+    public BeastmasterRuleGaugeTarget GaugeTarget { get; set; }
+    public BeastmasterRuleGaugeComparison GaugeComparison { get; set; }
+    public int GaugeThreshold { get; set; }
     public byte WhistleIndex { get; set; } = 1;
 
     public bool IsStatusRule => Type is BeastmasterRuleConditionType.SelfStatus
@@ -255,6 +347,7 @@ public sealed class BeastmasterRuleCondition
         if (!IsHealthRule
             && Type != BeastmasterRuleConditionType.TargetDataId
             && Type != BeastmasterRuleConditionType.TargetIsBoss
+            && Type != BeastmasterRuleConditionType.Gauge
             && Type != BeastmasterRuleConditionType.CurrentWhistle
             && ConditionId == 0)
         {
@@ -277,6 +370,25 @@ public sealed class BeastmasterRuleCondition
         if (Type == BeastmasterRuleConditionType.CurrentWhistle && WhistleIndex is < 1 or > 3)
         {
             error = "兽笛编号必须为 1、2 或 3。";
+            return false;
+        }
+
+        if (Type == BeastmasterRuleConditionType.Gauge && !BeastmasterRuleActions.IsGaugeThresholdValid(GaugeTarget, GaugeThreshold))
+        {
+            error = "量谱阈值超出范围（黄豆/蓝豆 0~3 层，技力/兽力 0~250）。";
+            return false;
+        }
+
+        if (Type == BeastmasterRuleConditionType.Gauge && (!Enum.IsDefined(GaugeTarget) || !Enum.IsDefined(GaugeComparison)))
+        {
+            error = "量谱项目或比较方式无效。";
+            return false;
+        }
+
+        if (StatusCondition == BeastmasterRuleStatusCondition.RemainingTime
+            && (!float.IsFinite(RemainingTimeSeconds) || RemainingTimeSeconds is < 0f or > 999f))
+        {
+            error = "剩余时间阈值必须在 0~999 秒之间。";
             return false;
         }
 
@@ -416,9 +528,23 @@ public sealed class BeastmasterRuleSetDefinition
                 .AppendLine($"检测ID|{rule.ConditionId}")
                 .AppendLine($"血量条件|{rule.HpCondition}")
                 .AppendLine($"血量阈值|{rule.HpThreshold.ToString(CultureInfo.InvariantCulture)}")
+                .AppendLine($"剩余时间条件|{rule.RemainingTimeComparison}")
+                .AppendLine($"剩余时间阈值|{rule.RemainingTimeSeconds.ToString(CultureInfo.InvariantCulture)}")
+                .AppendLine($"量谱项目|{rule.GaugeTarget}")
+                .AppendLine($"量谱比较|{rule.GaugeComparison}")
+                .AppendLine($"量谱阈值|{rule.GaugeThreshold}")
                 .AppendLine($"兽笛|{rule.WhistleIndex}")
                 .AppendLine($"技能|{rule.ActionId}")
-                .AppendLine($"奇弈道具|{rule.CrucibleItemId}");
+                .AppendLine($"奇弈道具|{rule.CrucibleItemId}")
+                .AppendLine($"自动输出项目|{rule.AutoOutputTarget}")
+                .AppendLine($"自动输出开关|{rule.AutoOutputEnabled}")
+                .AppendLine($"自动输出口令1|{rule.AutoOutputWhistleOneEnabled}")
+                .AppendLine($"自动输出口令2|{rule.AutoOutputWhistleTwoEnabled}")
+                .AppendLine($"自动输出口令3|{rule.AutoOutputWhistleThreeEnabled}")
+                .AppendLine($"自动输出阈值1|{rule.AutoOutputWhistleOneThreshold.ToString(CultureInfo.InvariantCulture)}")
+                .AppendLine($"自动输出阈值2|{rule.AutoOutputWhistleTwoThreshold.ToString(CultureInfo.InvariantCulture)}")
+                .AppendLine($"自动输出阈值3|{rule.AutoOutputWhistleThreeThreshold.ToString(CultureInfo.InvariantCulture)}")
+                .AppendLine($"自动输出选项|{rule.AutoOutputOption}");
             for (var conditionIndex = 0; conditionIndex < rule.Conditions.Count; conditionIndex++)
             {
                 var condition = rule.Conditions[conditionIndex];
@@ -428,6 +554,11 @@ public sealed class BeastmasterRuleSetDefinition
                     .AppendLine($"条件{conditionIndex}检测ID|{condition.ConditionId}")
                     .AppendLine($"条件{conditionIndex}血量条件|{condition.HpCondition}")
                     .AppendLine($"条件{conditionIndex}血量阈值|{condition.HpThreshold.ToString(CultureInfo.InvariantCulture)}")
+                    .AppendLine($"条件{conditionIndex}剩余时间条件|{condition.RemainingTimeComparison}")
+                    .AppendLine($"条件{conditionIndex}剩余时间阈值|{condition.RemainingTimeSeconds.ToString(CultureInfo.InvariantCulture)}")
+                    .AppendLine($"条件{conditionIndex}量谱项目|{condition.GaugeTarget}")
+                    .AppendLine($"条件{conditionIndex}量谱比较|{condition.GaugeComparison}")
+                    .AppendLine($"条件{conditionIndex}量谱阈值|{condition.GaugeThreshold}")
                     .AppendLine($"条件{conditionIndex}兽笛|{condition.WhistleIndex}");
             }
         }
@@ -526,9 +657,23 @@ public sealed class BeastmasterRuleSetDefinition
             case "检测ID" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var conditionId): rule.ConditionId = conditionId; return true;
             case "血量条件" when Enum.TryParse<BeastmasterRuleHpCondition>(value, out var hpCondition): rule.HpCondition = hpCondition; return true;
             case "血量阈值" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var hpThreshold): rule.HpThreshold = hpThreshold; return true;
+            case "剩余时间条件" when Enum.TryParse<BeastmasterRuleHpCondition>(value, out var remainingComparison): rule.RemainingTimeComparison = remainingComparison; return true;
+            case "剩余时间阈值" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var remainingSeconds): rule.RemainingTimeSeconds = remainingSeconds; return true;
+            case "量谱项目" when Enum.TryParse<BeastmasterRuleGaugeTarget>(value, out var gaugeTarget): rule.GaugeTarget = gaugeTarget; return true;
+            case "量谱比较" when Enum.TryParse<BeastmasterRuleGaugeComparison>(value, out var gaugeComparison): rule.GaugeComparison = gaugeComparison; return true;
+            case "量谱阈值" when int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var gaugeThreshold): rule.GaugeThreshold = gaugeThreshold; return true;
             case "兽笛" when byte.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var whistleIndex): rule.WhistleIndex = whistleIndex; return true;
             case "技能" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var actionId): rule.ActionId = actionId; return true;
             case "奇弈道具" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var itemId): rule.CrucibleItemId = itemId; return true;
+            case "自动输出项目" when Enum.TryParse<BeastmasterRuleAutoOutputTarget>(value, out var autoTarget): rule.AutoOutputTarget = autoTarget; return true;
+            case "自动输出开关" when bool.TryParse(value, out var autoEnabled): rule.AutoOutputEnabled = autoEnabled; return true;
+            case "自动输出口令1" when bool.TryParse(value, out var whistleOne): rule.AutoOutputWhistleOneEnabled = whistleOne; return true;
+            case "自动输出口令2" when bool.TryParse(value, out var whistleTwo): rule.AutoOutputWhistleTwoEnabled = whistleTwo; return true;
+            case "自动输出口令3" when bool.TryParse(value, out var whistleThree): rule.AutoOutputWhistleThreeEnabled = whistleThree; return true;
+            case "自动输出阈值1" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var thresholdOne): rule.AutoOutputWhistleOneThreshold = thresholdOne; return true;
+            case "自动输出阈值2" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var thresholdTwo): rule.AutoOutputWhistleTwoThreshold = thresholdTwo; return true;
+            case "自动输出阈值3" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var thresholdThree): rule.AutoOutputWhistleThreeThreshold = thresholdThree; return true;
+            case "自动输出选项" when bool.TryParse(value, out var autoOption): rule.AutoOutputOption = autoOption; return true;
             default: return false;
         }
     }
@@ -555,6 +700,11 @@ public sealed class BeastmasterRuleSetDefinition
             "检测ID" when uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) => Set(() => condition.ConditionId = id),
             "血量条件" when Enum.TryParse<BeastmasterRuleHpCondition>(value, out var hpCondition) => Set(() => condition.HpCondition = hpCondition),
             "血量阈值" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var threshold) => Set(() => condition.HpThreshold = threshold),
+            "剩余时间条件" when Enum.TryParse<BeastmasterRuleHpCondition>(value, out var remainingComparison) => Set(() => condition.RemainingTimeComparison = remainingComparison),
+            "剩余时间阈值" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var remainingSeconds) => Set(() => condition.RemainingTimeSeconds = remainingSeconds),
+            "量谱项目" when Enum.TryParse<BeastmasterRuleGaugeTarget>(value, out var gaugeTarget) => Set(() => condition.GaugeTarget = gaugeTarget),
+            "量谱比较" when Enum.TryParse<BeastmasterRuleGaugeComparison>(value, out var gaugeComparison) => Set(() => condition.GaugeComparison = gaugeComparison),
+            "量谱阈值" when int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var gaugeThreshold) => Set(() => condition.GaugeThreshold = gaugeThreshold),
             "兽笛" when byte.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var whistleIndex) => Set(() => condition.WhistleIndex = whistleIndex),
             _ => false,
         };
@@ -774,4 +924,54 @@ public static class BeastmasterRuleActions
         124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139,
         140, 141, 142, 143,
     ];
+
+    public static bool IsGaugeThresholdValid(BeastmasterRuleGaugeTarget target, int threshold)
+        => target switch
+        {
+            BeastmasterRuleGaugeTarget.BeastHeart or BeastmasterRuleGaugeTarget.BeastSoul => threshold is >= 0 and <= 3,
+            BeastmasterRuleGaugeTarget.Tp or BeastmasterRuleGaugeTarget.BeastPower => threshold is >= 0 and <= 250,
+            _ => false,
+        };
+
+    public static string GetGaugeTargetName(BeastmasterRuleGaugeTarget target)
+        => target switch
+        {
+            BeastmasterRuleGaugeTarget.BeastHeart => "黄豆（御兽之心）",
+            BeastmasterRuleGaugeTarget.BeastSoul => "蓝豆（兽灵之心）",
+            BeastmasterRuleGaugeTarget.Tp => "技力",
+            BeastmasterRuleGaugeTarget.BeastPower => "兽力",
+            _ => target.ToString(),
+        };
+
+    public static string GetGaugeComparisonText(BeastmasterRuleGaugeComparison comparison)
+        => comparison == BeastmasterRuleGaugeComparison.GreaterOrEqual ? ">=" : "<=";
+
+    public static string GetAutoOutputTargetName(BeastmasterRuleAutoOutputTarget target)
+        => target switch
+        {
+            BeastmasterRuleAutoOutputTarget.BasicCombo => "基础连击",
+            BeastmasterRuleAutoOutputTarget.Capture => "捕获",
+            BeastmasterRuleAutoOutputTarget.AutoWhistle => "自动兽笛",
+            BeastmasterRuleAutoOutputTarget.FinalStrike => "最后一击",
+            BeastmasterRuleAutoOutputTarget.Release => "释放",
+            BeastmasterRuleAutoOutputTarget.RecoveryItem => "低血量恢复药",
+            BeastmasterRuleAutoOutputTarget.BeastHeartCooperation => "御兽协作",
+            BeastmasterRuleAutoOutputTarget.BeastSoulCooperation => "兽灵协作",
+            BeastmasterRuleAutoOutputTarget.PhysicalThirdForm => "万象流转（物理）",
+            BeastmasterRuleAutoOutputTarget.MagicalThirdForm => "万象流转（魔法）",
+            BeastmasterRuleAutoOutputTarget.Drum => "鼓劲",
+            BeastmasterRuleAutoOutputTarget.Cheer => "声援",
+            BeastmasterRuleAutoOutputTarget.SafeShield => "安全盾牌",
+            BeastmasterRuleAutoOutputTarget.Borrow => "借用",
+            BeastmasterRuleAutoOutputTarget.BeastSkill => "魔兽技",
+            _ => target.ToString(),
+        };
+
+    public static string GetAutoOutputTargetDescription(BeastmasterRuleAutoOutputTarget target)
+        => target switch
+        {
+            BeastmasterRuleAutoOutputTarget.FinalStrike => "设置最后一击总开关、1/2/3 笛开关与宝宝血量阈值，以及是否等待释放；仅在本场战斗生效。",
+            BeastmasterRuleAutoOutputTarget.Release => "设置释放总开关、1/2/3 笛开关与目标血量阈值，以及是否只打 BOSS；仅在本场战斗生效。",
+            _ => "设置该功能块的开关；仅在本场战斗生效，战斗结束后恢复原设置。",
+        };
 }

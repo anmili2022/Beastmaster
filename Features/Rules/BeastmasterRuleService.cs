@@ -111,6 +111,11 @@ public sealed class BeastmasterRuleService
             return TryExecuteCrucibleItem(ruleSet, rule, ruleIndex, target, matchReason, now);
         }
 
+        if (rule.ActionType == BeastmasterRuleActionType.AutoOutput)
+        {
+            return TryApplyAutoOutputOverride(ruleSet, rule, ruleIndex, matchReason, now);
+        }
+
         var requestedActionId = rule.ActionId;
         var resolvedBeastSkillId = BeastmasterActionHelper.IsBeastSkillAction(requestedActionId)
             ? BeastmasterActionHelper.ResolveBeastSkillAction(actionManager)
@@ -191,6 +196,48 @@ public sealed class BeastmasterRuleService
             PrintChat($"{ruleSet.Name}|{rule.Name}|成功", message, now, TimeSpan.FromSeconds(2));
         }
         return true;
+    }
+
+    private bool TryApplyAutoOutputOverride(
+        BeastmasterRuleSetDefinition ruleSet,
+        BeastmasterRuleDefinition rule,
+        int ruleIndex,
+        string matchReason,
+        DateTime now)
+    {
+        var overrides = configuration.RuleActionOverrides;
+        var target = rule.AutoOutputTarget;
+        if (BeastmasterRuleDefinition.IsAutoOutputWhistleTarget(target))
+        {
+            overrides.SetBoolean(target, rule.AutoOutputEnabled);
+            overrides.SetFinalStrikeWhistle(0, rule.AutoOutputWhistleOneEnabled, rule.AutoOutputWhistleOneThreshold);
+            overrides.SetFinalStrikeWhistle(1, rule.AutoOutputWhistleTwoEnabled, rule.AutoOutputWhistleTwoThreshold);
+            overrides.SetFinalStrikeWhistle(2, rule.AutoOutputWhistleThreeEnabled, rule.AutoOutputWhistleThreeThreshold);
+            if (target == BeastmasterRuleAutoOutputTarget.FinalStrike)
+            {
+                overrides.SetFinalStrikeWaitForRelease(rule.AutoOutputOption);
+            }
+            else
+            {
+                overrides.SetReleaseBossOnly(rule.AutoOutputOption);
+            }
+        }
+        else
+        {
+            overrides.SetBoolean(target, rule.AutoOutputEnabled);
+        }
+
+        var message = $"规则集“{ruleSet.Name}”第 {ruleIndex + 1} 条“{rule.Name}”命中：{matchReason}；"
+            + $"已将本场战斗的{BeastmasterRuleActions.GetAutoOutputTargetName(target)}设为{(rule.AutoOutputEnabled ? "开启" : "关闭")}";
+        RecordDiagnostic(message);
+        lastFailureMessages.Remove($"{ruleSet.Name}|{rule.Name}");
+        if (configuration.RuleDiagnosticsEnabled
+            && ruleSet.DiagnosticMode == BeastmasterRuleDiagnosticMode.Full)
+        {
+            PrintChat($"{ruleSet.Name}|{rule.Name}|自动输出管理", message, now, TimeSpan.FromSeconds(2));
+        }
+
+        return false;
     }
 
     private bool TryExecuteCrucibleItem(
@@ -295,10 +342,10 @@ public sealed class BeastmasterRuleService
         switch (rule.ConditionType)
         {
             case BeastmasterRuleConditionType.SelfStatus:
-                return MatchesStatus(rule, player.StatusList.Any(status => status.StatusId == rule.ConditionId), "自身", out reason);
+                return MatchesStatusRule(rule, [player], "自身", out reason);
             case BeastmasterRuleConditionType.TargetStatus:
                 return target != null
-                    && MatchesStatus(rule, target.StatusList.Any(status => status.StatusId == rule.ConditionId), "当前目标", out reason);
+                    && MatchesStatusRule(rule, [target], "当前目标", out reason);
             case BeastmasterRuleConditionType.TargetCast:
                 if (target is { IsCasting: true } && target.CastActionId == rule.ConditionId)
                 {
@@ -309,6 +356,11 @@ public sealed class BeastmasterRuleService
             case BeastmasterRuleConditionType.DataIdStatus:
             {
                 var actors = FindDataIdActors(rule.DataId);
+                if (rule.StatusCondition == BeastmasterRuleStatusCondition.RemainingTime)
+                {
+                    return MatchesStatusRule(rule, actors, $"{actors.Count} 个 DataID {rule.DataId} 对象中", out reason);
+                }
+
                 var matched = rule.StatusCondition == BeastmasterRuleStatusCondition.Present
                     ? actors.Any(actor => actor.StatusList.Any(status => status.StatusId == rule.ConditionId))
                     : actors.Any(actor => actor.StatusList.All(status => status.StatusId != rule.ConditionId));
@@ -401,6 +453,32 @@ public sealed class BeastmasterRuleService
                 }
                 return matched;
             }
+            case BeastmasterRuleConditionType.Gauge:
+            {
+                var gauge = BeastmasterGaugeSnapshot.Read();
+                if (!gauge.Available)
+                {
+                    return false;
+                }
+
+                var value = rule.GaugeTarget switch
+                {
+                    BeastmasterRuleGaugeTarget.BeastHeart => gauge.BeastHeartStacks,
+                    BeastmasterRuleGaugeTarget.BeastSoul => gauge.BeastSoulStacks,
+                    BeastmasterRuleGaugeTarget.Tp => gauge.Tp,
+                    BeastmasterRuleGaugeTarget.BeastPower => gauge.BeastPower,
+                    _ => -1,
+                };
+                var matched = rule.GaugeComparison == BeastmasterRuleGaugeComparison.GreaterOrEqual
+                    ? value >= rule.GaugeThreshold
+                    : value <= rule.GaugeThreshold;
+                if (matched)
+                {
+                    reason = $"{BeastmasterRuleActions.GetGaugeTargetName(rule.GaugeTarget)} {value} "
+                        + $"{BeastmasterRuleActions.GetGaugeComparisonText(rule.GaugeComparison)} {rule.GaugeThreshold}";
+                }
+                return matched;
+            }
             default:
                 return false;
         }
@@ -424,6 +502,11 @@ public sealed class BeastmasterRuleService
                 ConditionId = condition.ConditionId,
                 HpCondition = condition.HpCondition,
                 HpThreshold = condition.HpThreshold,
+                RemainingTimeComparison = condition.RemainingTimeComparison,
+                RemainingTimeSeconds = condition.RemainingTimeSeconds,
+                GaugeTarget = condition.GaugeTarget,
+                GaugeComparison = condition.GaugeComparison,
+                GaugeThreshold = condition.GaugeThreshold,
                 WhistleIndex = condition.WhistleIndex,
             };
             if (Matches(conditionRule, player, target, out var conditionReason))
@@ -451,6 +534,53 @@ public sealed class BeastmasterRuleService
         return matched;
     }
 
+    private static bool MatchesStatusRemainingTime(
+        BeastmasterRuleDefinition rule,
+        IEnumerable<IBattleChara> actors,
+        string actor,
+        out string reason)
+    {
+        reason = string.Empty;
+        foreach (var actorChara in actors)
+        {
+            foreach (var status in actorChara.StatusList)
+            {
+                if (status.StatusId != rule.ConditionId)
+                {
+                    continue;
+                }
+
+                var remaining = status.RemainingTime;
+                var matched = rule.RemainingTimeComparison == BeastmasterRuleHpCondition.Above
+                    ? remaining > rule.RemainingTimeSeconds
+                    : remaining < rule.RemainingTimeSeconds;
+                if (matched)
+                {
+                    reason = $"{actor} BUFF {rule.ConditionId} 剩余时间 {remaining:0.##} 秒"
+                        + $"{(rule.RemainingTimeComparison == BeastmasterRuleHpCondition.Above ? " > " : " < ")}{rule.RemainingTimeSeconds:0.##} 秒";
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool MatchesStatusRule(
+        BeastmasterRuleDefinition rule,
+        IEnumerable<IBattleChara> actors,
+        string actor,
+        out string reason)
+    {
+        var actorList = actors as IList<IBattleChara> ?? actors.ToList();
+        if (rule.StatusCondition == BeastmasterRuleStatusCondition.RemainingTime)
+        {
+            return MatchesStatusRemainingTime(rule, actorList, actor, out reason);
+        }
+
+        return MatchesStatus(rule, actorList.Any(actorChara => actorChara.StatusList.Any(status => status.StatusId == rule.ConditionId)), actor, out reason);
+    }
+
     private static List<IBattleChara> FindDataIdActors(uint dataId)
         => DalamudApi.ObjectTable
             .OfType<IBattleChara>()
@@ -461,7 +591,12 @@ public sealed class BeastmasterRuleService
             .ToList();
 
     private static string GetStatusConditionText(BeastmasterRuleStatusCondition condition)
-        => condition == BeastmasterRuleStatusCondition.Present ? "存在" : "缺少";
+        => condition switch
+        {
+            BeastmasterRuleStatusCondition.Present => "存在",
+            BeastmasterRuleStatusCondition.Missing => "缺少",
+            _ => "剩余时间满足",
+        };
 
     private void RecordDiagnostic(string message)
     {

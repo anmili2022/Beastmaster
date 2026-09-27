@@ -153,8 +153,12 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
         else if (wasInCombat && !inCombat)
         {
-            currentBattleLog.Add($"[{DateTime.Now:HH:mm:ss}] 战斗结束");
-            battleLogs.Insert(0, ($"战斗 {currentBattleLog[0][1..9]}", string.Join(Environment.NewLine, currentBattleLog)));
+            if (Overrides.Any)
+            {
+                Overrides.Clear();
+            }
+
+            currentBattleLog.Add($"[{DateTime.Now:HH:mm:ss}] 战斗结束");            battleLogs.Insert(0, ($"战斗 {currentBattleLog[0][1..9]}", string.Join(Environment.NewLine, currentBattleLog)));
             if (battleLogs.Count > 10) battleLogs.RemoveAt(battleLogs.Count - 1);
             currentBattleLog.Clear();
         }
@@ -193,9 +197,57 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     public bool ActiveAttack => configuration.ActiveAttackEnabled;
 
-    public bool FinalStrikeEnabled => configuration.AutoFinalStrikeEnabled;
+    public bool FinalStrikeEnabled => GetOverridableBoolean(
+        BeastmasterRuleAutoOutputTarget.FinalStrike, configuration.AutoFinalStrikeEnabled);
 
-    public bool BasicComboEnabled => configuration.BasicComboEnabled;
+    public bool BasicComboEnabled => GetOverridableBoolean(
+        BeastmasterRuleAutoOutputTarget.BasicCombo, configuration.BasicComboEnabled);
+
+    private BeastmasterRuleActionOverrides Overrides => configuration.RuleActionOverrides;
+
+    public void ResetRuleActionOverrides() => Overrides.Clear();
+
+    private bool GetOverridableBoolean(BeastmasterRuleAutoOutputTarget target, bool fallback)
+        => Overrides.GetBoolean(target, fallback);
+
+    public bool GetEffectiveBoolean(BeastmasterRuleAutoOutputTarget target)
+        => configuration.RuleActionOverrides.GetBoolean(target, target switch
+        {
+            BeastmasterRuleAutoOutputTarget.BasicCombo => configuration.BasicComboEnabled,
+            BeastmasterRuleAutoOutputTarget.Capture => configuration.AutoCaptureTryCapture,
+            BeastmasterRuleAutoOutputTarget.AutoWhistle => configuration.AutoWhistleEnabled,
+            BeastmasterRuleAutoOutputTarget.FinalStrike => configuration.AutoFinalStrikeEnabled,
+            BeastmasterRuleAutoOutputTarget.Release => configuration.AutoReleaseEnabled,
+            BeastmasterRuleAutoOutputTarget.RecoveryItem => configuration.AutoRecoveryItemEnabled,
+            BeastmasterRuleAutoOutputTarget.BeastHeartCooperation => configuration.BeastHeartCooperationEnabled,
+            BeastmasterRuleAutoOutputTarget.BeastSoulCooperation => configuration.BeastSoulCooperationEnabled,
+            BeastmasterRuleAutoOutputTarget.PhysicalThirdForm => configuration.PhysicalThirdFormEnabled,
+            BeastmasterRuleAutoOutputTarget.MagicalThirdForm => configuration.MagicalThirdFormEnabled,
+            BeastmasterRuleAutoOutputTarget.Drum => configuration.AutoDrumEnabled,
+            BeastmasterRuleAutoOutputTarget.Cheer => configuration.AutoCheerEnabled,
+            BeastmasterRuleAutoOutputTarget.SafeShield => configuration.AutoSafeShieldEnabled,
+            BeastmasterRuleAutoOutputTarget.Borrow => configuration.AutoBorrowEnabled,
+            BeastmasterRuleAutoOutputTarget.BeastSkill => configuration.AutoBeastSkillEnabled,
+            _ => false,
+        });
+
+    private bool IsBeastHeartCooperationEnabled
+        => GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.BeastHeartCooperation, configuration.BeastHeartCooperationEnabled);
+
+    private bool IsBeastSoulCooperationEnabled
+        => GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.BeastSoulCooperation, configuration.BeastSoulCooperationEnabled);
+
+    private bool IsPhysicalThirdFormEnabled
+        => GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.PhysicalThirdForm, configuration.PhysicalThirdFormEnabled);
+
+    private bool IsMagicalThirdFormEnabled
+        => GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.MagicalThirdForm, configuration.MagicalThirdFormEnabled);
+
+    private bool IsReleaseEnabled
+        => GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.Release, configuration.AutoReleaseEnabled);
+
+    private bool IsAutoWhistleEnabled
+        => GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.AutoWhistle, configuration.AutoWhistleEnabled);
 
     public IReadOnlyList<string> BattleLogLabels => battleLogs.Select(log => log.Label).ToArray();
 
@@ -347,8 +399,8 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         nextActionUtc = DateTime.UtcNow.AddMilliseconds(700);
-        if ((configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
-            && TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var firstCooperationActionId, out var followUpActionId, out var requiredStatusId)
+        if ((IsBeastHeartCooperationEnabled || IsBeastSoulCooperationEnabled)
+            && TryGetCooperationAction(gauge, IsBeastHeartCooperationEnabled, out var firstCooperationActionId, out var followUpActionId, out var requiredStatusId)
             && firstCooperationActionId == BeastmasterUltimateActionId)
         {
             pendingCooperationActionId = followUpActionId;
@@ -601,7 +653,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         var playerHpPercent = player.MaxHp == 0
             ? 100f
             : player.CurrentHp * 100f / player.MaxHp;
-        if (configuration.AutoRecoveryItemEnabled
+        if (GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.RecoveryItem, configuration.AutoRecoveryItemEnabled)
             && DalamudApi.Condition[ConditionFlag.InCombat]
             && IsArenaTerritory(DalamudApi.ClientState.TerritoryType)
             && playerHpPercent < configuration.AutoRecoveryItemHpThreshold
@@ -636,7 +688,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        if (!configuration.AutoWhistleEnabled && pendingWhistleActionId != 0)
+        if (!IsAutoWhistleEnabled && pendingWhistleActionId != 0)
         {
             ResetAutoWhistle();
         }
@@ -650,7 +702,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (target is null)
         {
-            if (configuration.AutoWhistleEnabled
+            if (IsAutoWhistleEnabled
                 && TryUseAutoWhistle(actionManager, gauge, now))
             {
                 return;
@@ -689,7 +741,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (!configuration.ActiveAttackEnabled && !DalamudApi.Condition[ConditionFlag.InCombat])
         {
-            if (configuration.AutoWhistleEnabled
+            if (IsAutoWhistleEnabled
                 && TryUseAutoWhistle(actionManager, gauge, now))
             {
                 return;
@@ -742,7 +794,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return;
         }
 
-        if (configuration.AutoWhistleEnabled
+        if (IsAutoWhistleEnabled
             && TryUseAutoWhistle(actionManager, gauge, now))
         {
             return;
@@ -758,7 +810,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
         if (gcdReady)
         {
-            if (configuration.BasicComboEnabled)
+            if (GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.BasicCombo, configuration.BasicComboEnabled))
             {
                 basicComboAttempted = true;
                 if (TryUseBasicCombo(actionManager, player, target, now))
@@ -768,7 +820,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 }
             }
 
-            if (!configuration.BasicComboEnabled)
+            if (!GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.BasicCombo, configuration.BasicComboEnabled))
             {
                 StatusText = "等待可用技能";
                 NextActionName = "-";
@@ -804,7 +856,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             }
 
             if (gcdRemaining > CooperationMinimumGcdRemaining
-                && (configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
+                && (IsPhysicalThirdFormEnabled || IsMagicalThirdFormEnabled)
                 && TryUseThirdFormAction(actionManager, gauge, target.GameObjectId, now))
             {
                 abilitiesUsedInGcdWindow++;
@@ -818,21 +870,21 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 return;
             }
 
-            if (configuration.AutoBorrowEnabled
+            if (GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.Borrow, configuration.AutoBorrowEnabled)
                 && TryUseBorrow(actionManager, now))
             {
                 abilitiesUsedInGcdWindow++;
                 return;
             }
 
-            if (configuration.AutoBeastSkillEnabled
+            if (GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.BeastSkill, configuration.AutoBeastSkillEnabled)
                 && TryUseBeastSkill(actionManager, target.GameObjectId, now))
             {
                 abilitiesUsedInGcdWindow++;
                 return;
             }
 
-            if (configuration.AutoDrumEnabled
+            if (GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.Drum, configuration.AutoDrumEnabled)
                 && (gauge.BeastHeartStacks == 0 || (gauge.BeastHeartStacks == 3 && gauge.Tp == 0))
                 && TryUseEnabledSelfAction(actionManager, DrumActionId, "鼓劲", now))
             {
@@ -840,7 +892,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 return;
             }
 
-            if (configuration.AutoCheerEnabled
+            if (GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.Cheer, configuration.AutoCheerEnabled)
                 && (gauge.BeastSoulStacks == 0 || (gauge.BeastSoulStacks == 3 && gauge.BeastPower == 0))
                 && TryUseEnabledSelfAction(actionManager, CheerActionId, "声援", now))
             {
@@ -848,7 +900,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 return;
             }
 
-            if (configuration.AutoReleaseEnabled
+            if (IsReleaseEnabled
                 && gauge.SummonEntry != null
                 && TryUseReleaseAction(actionManager, gauge, target, now))
             {
@@ -864,7 +916,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 return;
             }
 
-            if (configuration.AutoSafeShieldEnabled
+            if (GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.SafeShield, configuration.AutoSafeShieldEnabled)
                 && now >= nextSafeShieldAttemptUtc
                 && BeastmasterActionHelper.IsPlayerInActionRange(
                     player,
@@ -1068,7 +1120,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
     }
 
     private bool IsThirdFormEnabled
-        => configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled;
+        => IsPhysicalThirdFormEnabled || IsMagicalThirdFormEnabled;
 
     private unsafe void EmitAutoOutputDiagnosticSummary(
         ActionManager* actionManager,
@@ -1092,14 +1144,14 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             items.Add((name, stateKey, detail));
         }
 
-        if (configuration.BeastHeartCooperationEnabled || configuration.BeastSoulCooperationEnabled)
+        if (IsBeastHeartCooperationEnabled || IsBeastSoulCooperationEnabled)
         {
             if (pendingCooperationActionId != 0)
             {
                 var status = actionManager->GetActionStatus(ActionType.Action, pendingCooperationActionId, target.GameObjectId);
                 Add("御兽", status == 0, status == 0 ? "" : $"状态码 {status}");
             }
-            else if (TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var cooperationId, out _, out _))
+            else if (TryGetCooperationAction(gauge, IsBeastHeartCooperationEnabled, out var cooperationId, out _, out _))
             {
                 var status = actionManager->GetActionStatus(ActionType.Action, cooperationId, target.GameObjectId);
                 Add("御兽", status == 0, status == 0 ? "" : gauge.Tp < BeastmasterGaugeSnapshot.ComboGaugeRequirement || gauge.BeastPower < BeastmasterGaugeSnapshot.ComboGaugeRequirement
@@ -1112,7 +1164,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             }
         }
 
-        if (configuration.AutoFinalStrikeEnabled
+        if (FinalStrikeEnabled
             && TryGetFinalStrikeSettings(gauge.WhistleIndex, out var finalEnabled, out var finalThreshold))
         {
             var finalStatus = actionManager->GetActionStatus(ActionType.Action, FinalStrikeActionId, target.GameObjectId);
@@ -1125,13 +1177,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                     : finalStatus == 0 ? "" : $"状态码 {finalStatus}");
         }
 
-        if (configuration.PhysicalThirdFormEnabled || configuration.MagicalThirdFormEnabled)
+        if (IsPhysicalThirdFormEnabled || IsMagicalThirdFormEnabled)
         {
             var thirdReady = gauge.BeastHeartStacks >= 3 && (gauge.HasWhiteStatus || gauge.HasPurpleStatus);
             Add("万象流转", thirdReady, thirdReady ? "" : $"资源/状态不足（兽心 {gauge.BeastHeartStacks} 层）");
         }
 
-        if (configuration.AutoReleaseEnabled
+        if (IsReleaseEnabled
             && gauge.SummonEntry != null)
         {
             var releaseId = actionManager->GetAdjustedActionId(BeastmasterReleaseBaseActionId);
@@ -1152,7 +1204,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             }
         }
 
-        if (configuration.AutoSafeShieldEnabled)
+        if (GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.SafeShield, configuration.AutoSafeShieldEnabled))
         {
             var shieldStatus = actionManager->GetActionStatus(ActionType.Action, SafeShieldActionId, target.GameObjectId);
             var shieldInRange = BeastmasterActionHelper.IsPlayerInActionRange(
@@ -1172,7 +1224,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             Add("捕获", canCapture, canCapture ? "" : $"目标血量 {targetHpPercent:0.#}%/{configuration.CaptureHpThreshold:0.#}%");
         }
 
-        if (configuration.BasicComboEnabled)
+        if (GetOverridableBoolean(BeastmasterRuleAutoOutputTarget.BasicCombo, configuration.BasicComboEnabled))
         {
             var comboId = actionManager->Combo.Timer > 0f && actionManager->Combo.Action == biteActionId && player.Level >= 12
                 ? shieldActionId
@@ -1281,10 +1333,10 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         IBattleChara target,
         DateTime now)
     {
-        if ((!configuration.BeastHeartCooperationEnabled && !configuration.BeastSoulCooperationEnabled)
+        if ((!IsBeastHeartCooperationEnabled && !IsBeastSoulCooperationEnabled)
             || pendingCooperationActionId != 0
             || HasRecoverableCooperationBuff()
-            || !TryGetCooperationAction(gauge, configuration.BeastHeartCooperationEnabled, out var cooperationActionId, out var cooperationFollowUpId, out var cooperationStatusId))
+            || !TryGetCooperationAction(gauge, IsBeastHeartCooperationEnabled, out var cooperationActionId, out var cooperationFollowUpId, out var cooperationStatusId))
         {
             return false;
         }
@@ -1321,7 +1373,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         pendingCooperationStatusId = cooperationStatusId;
         pendingCooperationUntilUtc = now.AddSeconds(7);
         ReportCooperationDiagnostic(
-            $"已建立{(configuration.BeastHeartCooperationEnabled ? "御兽（黄豆）" : "兽灵（蓝豆）")}待续："
+            $"已建立{(IsBeastHeartCooperationEnabled ? "御兽（黄豆）" : "兽灵（蓝豆）")}待续："
             + $"一段 {GetActionName(cooperationActionId)}（{cooperationActionId}），"
             + $"二段 {GetActionName(cooperationFollowUpId)}（{cooperationFollowUpId}），"
             + $"等待 {GetAttributeStatusName(cooperationStatusId)}（{cooperationStatusId}），"
@@ -1337,7 +1389,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         IBattleChara target,
         DateTime now)
     {
-        if (!configuration.BeastHeartCooperationEnabled && !configuration.BeastSoulCooperationEnabled)
+        if (!IsBeastHeartCooperationEnabled && !IsBeastSoulCooperationEnabled)
         {
             return false;
         }
@@ -1417,7 +1469,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         statusId = 0;
         var player = DalamudApi.ObjectTable.LocalPlayer;
         if (player == null
-            || (!configuration.BeastHeartCooperationEnabled && !configuration.BeastSoulCooperationEnabled))
+            || (!IsBeastHeartCooperationEnabled && !IsBeastSoulCooperationEnabled))
         {
             return false;
         }
@@ -1430,7 +1482,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return false;
         }
 
-        if (configuration.BeastSoulCooperationEnabled)
+        if (IsBeastSoulCooperationEnabled)
         {
             actionId = BeastmasterUltimateActionId;
             return true;
@@ -1578,7 +1630,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
 
         var targetHpPercent = target.MaxHp == 0 ? 100f : target.CurrentHp * 100f / target.MaxHp;
-        if (configuration.AutoReleaseBossOnly
+        if (Overrides.GetReleaseBossOnly(configuration.AutoReleaseBossOnly)
             && DalamudApi.ObjectTable.LocalPlayer is IBattleChara player
             && (player.MaxHp == 0 || target.MaxHp <= (double)player.MaxHp * 5d))
         {
@@ -1652,7 +1704,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         ulong targetId,
         DateTime now)
     {
-        if (!configuration.AutoFinalStrikeEnabled)
+        if (!FinalStrikeEnabled)
         {
             return false;
         }
@@ -1716,7 +1768,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
             return false;
         }
 
-        if (configuration.AutoFinalStrikeWaitForRelease)
+        if (Overrides.GetFinalStrikeWaitForRelease(configuration.AutoFinalStrikeWaitForRelease))
         {
             var shouldWaitForRelease = TryGetReleaseSettings(gauge.WhistleIndex, out var releaseEnabled, out var releaseThreshold)
                 && releaseEnabled
@@ -1780,6 +1832,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     private bool TryGetFinalStrikeSettings(byte whistleIndex, out bool enabled, out float hpThreshold)
     {
+        enabled = false;
+        hpThreshold = 0f;
+        if (Overrides.TryGetFinalStrikeWhistle(whistleIndex - 1, out enabled, out hpThreshold))
+        {
+            return true;
+        }
+
         (enabled, hpThreshold) = whistleIndex switch
         {
             1 => (configuration.AutoFinalStrikeWhistleOneEnabled, configuration.AutoFinalStrikeWhistleOneHpThreshold),
@@ -1792,6 +1851,13 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
 
     private bool TryGetReleaseSettings(byte whistleIndex, out bool enabled, out float targetHpThreshold)
     {
+        enabled = false;
+        targetHpThreshold = 0f;
+        if (Overrides.TryGetReleaseWhistle(whistleIndex - 1, out enabled, out targetHpThreshold))
+        {
+            return true;
+        }
+
         (enabled, targetHpThreshold) = whistleIndex switch
         {
             1 => (configuration.AutoReleaseWhistleOneEnabled, configuration.AutoReleaseWhistleOneTargetHpThreshold),
@@ -1820,7 +1886,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
         }
         else if (gauge.HasWhiteStatus || gauge.HasPurpleStatus)
         {
-            actionId = (gauge.HasWhiteStatus, configuration.PhysicalThirdFormEnabled) switch
+            actionId = (gauge.HasWhiteStatus, IsPhysicalThirdFormEnabled) switch
             {
                 (true, true) => WhitePhysicalThirdFormActionId,
                 (true, false) => WhiteMagicalThirdFormActionId,
@@ -1828,7 +1894,7 @@ public sealed class BeastmasterAutoCaptureService : IDisposable
                 (false, false) => PurpleMagicalThirdFormActionId,
             };
             actionTargetId = targetId;
-            reason = $"{(gauge.HasWhiteStatus ? "白（生息）" : "黑/紫（死灭）")} + {(configuration.PhysicalThirdFormEnabled ? "万象流转（物理）" : "万象流转（魔法）")}";
+            reason = $"{(gauge.HasWhiteStatus ? "白（生息）" : "黑/紫（死灭）")} + {(IsPhysicalThirdFormEnabled ? "万象流转（物理）" : "万象流转（魔法）")}";
         }
         else
         {

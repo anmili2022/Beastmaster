@@ -85,6 +85,7 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
     public int SelectedSequenceIndex { get; set; }
     public List<BeastmasterSequenceDefinition> Sequences { get; set; } = [];
     public bool RuleModeEnabled { get; set; } = true;
+    public BeastmasterRuleActionOverrides RuleActionOverrides { get; set; } = new();
     public bool RuleDiagnosticsEnabled { get; set; }
     public bool AutoOutputDiagnosticsEnabled { get; set; }
     public bool RangeWaitChatMessagesEnabled { get; set; }
@@ -110,6 +111,8 @@ public sealed class BeastmasterConfiguration : IPluginConfiguration
         Sequences ??= [];
         RuleSets ??= [];
         PartyPresets ??= [];
+        RuleActionOverrides ??= new BeastmasterRuleActionOverrides();
+        RuleActionOverrides.Clear();
         if (Sequences.Count == 0)
         {
             Sequences.Add(BeastmasterSequenceDefinition.CreateWaterOpener());
