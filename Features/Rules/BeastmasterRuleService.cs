@@ -206,29 +206,42 @@ public sealed class BeastmasterRuleService
         DateTime now)
     {
         var overrides = configuration.RuleActionOverrides;
-        var target = rule.AutoOutputTarget;
-        if (BeastmasterRuleDefinition.IsAutoOutputWhistleTarget(target))
+        rule.EnsureAutoOutputEntries();
+        var applied = new List<string>(rule.AutoOutputEntries.Count);
+        foreach (var entry in rule.AutoOutputEntries)
         {
-            overrides.SetBoolean(target, rule.AutoOutputEnabled);
-            overrides.SetFinalStrikeWhistle(0, rule.AutoOutputWhistleOneEnabled, rule.AutoOutputWhistleOneThreshold);
-            overrides.SetFinalStrikeWhistle(1, rule.AutoOutputWhistleTwoEnabled, rule.AutoOutputWhistleTwoThreshold);
-            overrides.SetFinalStrikeWhistle(2, rule.AutoOutputWhistleThreeEnabled, rule.AutoOutputWhistleThreeThreshold);
-            if (target == BeastmasterRuleAutoOutputTarget.FinalStrike)
+            if (entry.Mode == BeastmasterRuleAutoOutputMode.NoChange)
             {
-                overrides.SetFinalStrikeWaitForRelease(rule.AutoOutputOption);
+                continue;
             }
-            else
+
+            var enabled = entry.Mode == BeastmasterRuleAutoOutputMode.Enable;
+            overrides.SetBoolean(entry.Target, enabled);
+            if (BeastmasterRuleDefinition.IsAutoOutputWhistleTarget(entry.Target))
             {
-                overrides.SetReleaseBossOnly(rule.AutoOutputOption);
+                overrides.SetFinalStrikeWhistle(0, entry.WhistleOneEnabled, entry.WhistleOneThreshold);
+                overrides.SetFinalStrikeWhistle(1, entry.WhistleTwoEnabled, entry.WhistleTwoThreshold);
+                overrides.SetFinalStrikeWhistle(2, entry.WhistleThreeEnabled, entry.WhistleThreeThreshold);
+                if (entry.Target == BeastmasterRuleAutoOutputTarget.FinalStrike)
+                {
+                    overrides.SetFinalStrikeWaitForRelease(entry.Option);
+                }
+                else
+                {
+                    overrides.SetReleaseBossOnly(entry.Option);
+                }
             }
+
+            applied.Add($"{BeastmasterRuleActions.GetAutoOutputTargetName(entry.Target)}设为{(enabled ? "开启" : "关闭")}");
         }
-        else
+
+        if (applied.Count == 0)
         {
-            overrides.SetBoolean(target, rule.AutoOutputEnabled);
+            return false;
         }
 
         var message = $"规则集“{ruleSet.Name}”第 {ruleIndex + 1} 条“{rule.Name}”命中：{matchReason}；"
-            + $"已将本场战斗的{BeastmasterRuleActions.GetAutoOutputTargetName(target)}设为{(rule.AutoOutputEnabled ? "开启" : "关闭")}";
+            + $"已将本场战斗的 {string.Join('、', applied)}";
         RecordDiagnostic(message);
         lastFailureMessages.Remove($"{ruleSet.Name}|{rule.Name}");
         if (configuration.RuleDiagnosticsEnabled

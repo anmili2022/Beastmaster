@@ -19,6 +19,13 @@ public enum BeastmasterRuleAutoOutputTarget
     BeastSkill,
 }
 
+public enum BeastmasterRuleAutoOutputMode
+{
+    NoChange,
+    Enable,
+    Disable,
+}
+
 public sealed class BeastmasterRuleActionOverrides
 {
     private readonly bool?[] booleanOverrides = new bool?[Enum.GetValues<BeastmasterRuleAutoOutputTarget>().Length];

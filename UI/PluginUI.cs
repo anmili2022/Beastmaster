@@ -1379,77 +1379,105 @@ public sealed class PluginUI
 
     private void DrawRuleAutoOutputFields(BeastmasterRuleDefinition rule)
     {
-        var target = rule.AutoOutputTarget;
-        ImGui.SetNextItemWidth(220f);
-        if (ImGui.BeginCombo("管理项目", BeastmasterRuleActions.GetAutoOutputTargetName(target)))
-        {
-            foreach (var option in Enum.GetValues<BeastmasterRuleAutoOutputTarget>())
-            {
-                var isSelected = option == target;
-                if (ImGui.Selectable(BeastmasterRuleActions.GetAutoOutputTargetName(option), isSelected))
-                {
-                    rule.AutoOutputTarget = option;
-                    configuration.Save();
-                }
+        rule.EnsureAutoOutputEntries();
 
-                if (isSelected) ImGui.SetItemDefaultFocus();
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip(BeastmasterRuleActions.GetAutoOutputTargetDescription(option));
+        ImGui.Text("自动输出管理项目");
+        ImGui.SameLine();
+        ImGui.TextDisabled("可为同一规则添加多个功能块，仅修改选择“开启/关闭”的项目。");
+
+        for (var index = 0; index < rule.AutoOutputEntries.Count; index++)
+        {
+            var entry = rule.AutoOutputEntries[index];
+            ImGui.PushID($"rule-auto-output-entry-{index}");
+
+            ImGui.Text($"{index + 1}. {BeastmasterRuleActions.GetAutoOutputTargetName(entry.Target)}");
+            ImGui.SameLine();
+
+            var mode = (int)entry.Mode;
+            ImGui.SetNextItemWidth(110f);
+            if (ImGui.Combo("##mode", ref mode, "不修改\0开启\0关闭\0"))
+            {
+                entry.Mode = (BeastmasterRuleAutoOutputMode)mode;
+                configuration.Save();
             }
 
-            ImGui.EndCombo();
+            ImGui.SameLine();
+            if (ImGui.SmallButton("删除"))
+            {
+                rule.AutoOutputEntries.RemoveAt(index);
+                configuration.Save();
+                ImGui.PopID();
+                break;
+            }
+
+            if (entry.Mode != BeastmasterRuleAutoOutputMode.NoChange
+                && BeastmasterRuleDefinition.IsAutoOutputWhistleTarget(entry.Target))
+            {
+                DrawRuleAutoOutputEntryWhistle(entry, "1 笛", 0);
+                DrawRuleAutoOutputEntryWhistle(entry, "2 笛", 1);
+                DrawRuleAutoOutputEntryWhistle(entry, "3 笛", 2);
+
+                var option = entry.Option;
+                var optionLabel = entry.Target == BeastmasterRuleAutoOutputTarget.FinalStrike ? "等待释放" : "只打 BOSS";
+                if (ImGui.Checkbox(optionLabel, ref option))
+                {
+                    entry.Option = option;
+                    configuration.Save();
+                }
+            }
+
+            ImGui.PopID();
         }
 
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip(BeastmasterRuleActions.GetAutoOutputTargetDescription(target));
-
-        var enabled = rule.AutoOutputEnabled;
-        if (ImGui.Checkbox("开启该功能块", ref enabled))
+        var addable = Enum.GetValues<BeastmasterRuleAutoOutputTarget>()
+            .Where(target => rule.AutoOutputEntries.All(entry => entry.Target != target))
+            .ToList();
+        if (addable.Count > 0)
         {
-            rule.AutoOutputEnabled = enabled;
-            configuration.Save();
+            ImGui.SetNextItemWidth(220f);
+            if (ImGui.BeginCombo("添加功能块", "选择功能块"))
+            {
+                foreach (var option in addable)
+                {
+                    if (ImGui.Selectable(BeastmasterRuleActions.GetAutoOutputTargetName(option)))
+                    {
+                        rule.AutoOutputEntries.Add(new BeastmasterRuleAutoOutputEntry
+                        {
+                            Target = option,
+                            Mode = BeastmasterRuleAutoOutputMode.NoChange,
+                        });
+                        configuration.Save();
+                    }
+
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(BeastmasterRuleActions.GetAutoOutputTargetDescription(option));
+                }
+
+                ImGui.EndCombo();
+            }
         }
 
-        if (!BeastmasterRuleDefinition.IsAutoOutputWhistleTarget(target))
-        {
-            ImGui.TextDisabled("仅修改开关；本场战斗持续生效，战斗结束后恢复原设置。");
-            return;
-        }
-
-        DrawRuleAutoOutputWhistle(rule, "1 笛", 0);
-        DrawRuleAutoOutputWhistle(rule, "2 笛", 1);
-        DrawRuleAutoOutputWhistle(rule, "3 笛", 2);
-
-        var autoOption = rule.AutoOutputOption;
-        var optionLabel = target == BeastmasterRuleAutoOutputTarget.FinalStrike ? "等待释放" : "只打 BOSS";
-        if (ImGui.Checkbox(optionLabel, ref autoOption))
-        {
-            rule.AutoOutputOption = autoOption;
-            configuration.Save();
-        }
-
-        ImGui.TextDisabled(target == BeastmasterRuleAutoOutputTarget.FinalStrike
-            ? "整体设置最后一击总开关、三笛开关与血量阈值、等待释放；本场战斗持续生效。"
-            : "整体设置释放总开关、三笛开关与目标血量阈值、只打 BOSS；本场战斗持续生效。");
+        ImGui.TextDisabled("本场战斗持续生效，战斗结束后恢复原设置；未选择“开启/关闭”的项目保持用户设置。");
     }
 
-    private void DrawRuleAutoOutputWhistle(BeastmasterRuleDefinition rule, string label, int index)
+    private void DrawRuleAutoOutputEntryWhistle(BeastmasterRuleAutoOutputEntry entry, string label, int index)
     {
         var enabled = index switch
         {
-            0 => rule.AutoOutputWhistleOneEnabled,
-            1 => rule.AutoOutputWhistleTwoEnabled,
-            _ => rule.AutoOutputWhistleThreeEnabled,
+            0 => entry.WhistleOneEnabled,
+            1 => entry.WhistleTwoEnabled,
+            _ => entry.WhistleThreeEnabled,
         };
         var threshold = index switch
         {
-            0 => rule.AutoOutputWhistleOneThreshold,
-            1 => rule.AutoOutputWhistleTwoThreshold,
-            _ => rule.AutoOutputWhistleThreeThreshold,
+            0 => entry.WhistleOneThreshold,
+            1 => entry.WhistleTwoThreshold,
+            _ => entry.WhistleThreeThreshold,
         };
 
-        ImGui.PushID($"rule-auto-output-whistle-{index}");
+        ImGui.PushID($"rule-auto-output-entry-whistle-{index}");
         if (ImGui.Checkbox(label, ref enabled))
         {
-            SetRuleAutoOutputWhistleEnabled(rule, index, enabled);
+            SetRuleAutoOutputEntryWhistleEnabled(entry, index, enabled);
             configuration.Save();
         }
 
@@ -1457,30 +1485,30 @@ public sealed class PluginUI
         ImGui.SetNextItemWidth(90f);
         if (ImGui.DragFloat("##threshold", ref threshold, 0.5f, 1f, 100f, "%.0f%%"))
         {
-            SetRuleAutoOutputWhistleThreshold(rule, index, Math.Clamp(threshold, 1f, 100f));
+            SetRuleAutoOutputEntryWhistleThreshold(entry, index, Math.Clamp(threshold, 1f, 100f));
             configuration.Save();
         }
 
         ImGui.PopID();
     }
 
-    private static void SetRuleAutoOutputWhistleEnabled(BeastmasterRuleDefinition rule, int index, bool value)
+    private static void SetRuleAutoOutputEntryWhistleEnabled(BeastmasterRuleAutoOutputEntry entry, int index, bool value)
     {
         switch (index)
         {
-            case 0: rule.AutoOutputWhistleOneEnabled = value; break;
-            case 1: rule.AutoOutputWhistleTwoEnabled = value; break;
-            default: rule.AutoOutputWhistleThreeEnabled = value; break;
+            case 0: entry.WhistleOneEnabled = value; break;
+            case 1: entry.WhistleTwoEnabled = value; break;
+            default: entry.WhistleThreeEnabled = value; break;
         }
     }
 
-    private static void SetRuleAutoOutputWhistleThreshold(BeastmasterRuleDefinition rule, int index, float value)
+    private static void SetRuleAutoOutputEntryWhistleThreshold(BeastmasterRuleAutoOutputEntry entry, int index, float value)
     {
         switch (index)
         {
-            case 0: rule.AutoOutputWhistleOneThreshold = value; break;
-            case 1: rule.AutoOutputWhistleTwoThreshold = value; break;
-            default: rule.AutoOutputWhistleThreeThreshold = value; break;
+            case 0: entry.WhistleOneThreshold = value; break;
+            case 1: entry.WhistleTwoThreshold = value; break;
+            default: entry.WhistleThreeThreshold = value; break;
         }
     }
 
@@ -1659,6 +1687,18 @@ public sealed class PluginUI
             ActionId = source.ActionId,
             CrucibleItemType = source.CrucibleItemType,
             CrucibleItemId = source.CrucibleItemId,
+            AutoOutputEntries = source.AutoOutputEntries.Select(entry => new BeastmasterRuleAutoOutputEntry
+            {
+                Target = entry.Target,
+                Mode = entry.Mode,
+                WhistleOneEnabled = entry.WhistleOneEnabled,
+                WhistleTwoEnabled = entry.WhistleTwoEnabled,
+                WhistleThreeEnabled = entry.WhistleThreeEnabled,
+                WhistleOneThreshold = entry.WhistleOneThreshold,
+                WhistleTwoThreshold = entry.WhistleTwoThreshold,
+                WhistleThreeThreshold = entry.WhistleThreeThreshold,
+                Option = entry.Option,
+            }).ToList(),
         };
 
     private static string GetRuleSummary(BeastmasterRuleDefinition rule)
@@ -1670,7 +1710,14 @@ public sealed class PluginUI
         if (rule.ActionType == BeastmasterRuleActionType.CrucibleItem)
             return $"{condition} -> 道具 {BeastmasterRuleActions.GetCrucibleItemTypeName(rule.CrucibleItemType)}";
         if (rule.ActionType == BeastmasterRuleActionType.AutoOutput)
-            return $"{condition} -> 自动输出 {BeastmasterRuleActions.GetAutoOutputTargetName(rule.AutoOutputTarget)} {(rule.AutoOutputEnabled ? "开" : "关")}";
+        {
+            rule.EnsureAutoOutputEntries();
+            var entries = rule.AutoOutputEntries
+                .Where(entry => entry.Mode != BeastmasterRuleAutoOutputMode.NoChange)
+                .Select(entry => $"{BeastmasterRuleActions.GetAutoOutputTargetName(entry.Target)}"
+                    + $"{(entry.Mode == BeastmasterRuleAutoOutputMode.Enable ? "开" : "关")}");
+            return $"{condition} -> 自动输出 {string.Join('、', entries)}";
+        }
         var action = BeastmasterRuleActions.Supported.FirstOrDefault(item => item.ActionId == rule.ActionId);
         return $"{condition} -> {(string.IsNullOrEmpty(action.Name) ? rule.ActionId.ToString() : action.Name)}";
     }

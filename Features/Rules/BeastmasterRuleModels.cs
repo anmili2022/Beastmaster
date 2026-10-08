@@ -88,6 +88,20 @@ public enum BeastmasterRuleDiagnosticMode
 }
 
 [Serializable]
+public sealed class BeastmasterRuleAutoOutputEntry
+{
+    public BeastmasterRuleAutoOutputTarget Target { get; set; } = BeastmasterRuleAutoOutputTarget.BasicCombo;
+    public BeastmasterRuleAutoOutputMode Mode { get; set; } = BeastmasterRuleAutoOutputMode.NoChange;
+    public bool WhistleOneEnabled { get; set; } = true;
+    public bool WhistleTwoEnabled { get; set; } = true;
+    public bool WhistleThreeEnabled { get; set; } = true;
+    public float WhistleOneThreshold { get; set; } = 20f;
+    public float WhistleTwoThreshold { get; set; } = 20f;
+    public float WhistleThreeThreshold { get; set; } = 20f;
+    public bool Option { get; set; }
+}
+
+[Serializable]
 public sealed class BeastmasterRuleDefinition
 {
     public bool Enabled { get; set; } = true;
@@ -119,6 +133,29 @@ public sealed class BeastmasterRuleDefinition
     public float AutoOutputWhistleTwoThreshold { get; set; } = 20f;
     public float AutoOutputWhistleThreeThreshold { get; set; } = 20f;
     public bool AutoOutputOption { get; set; }
+    public List<BeastmasterRuleAutoOutputEntry> AutoOutputEntries { get; set; } = [];
+
+    public void EnsureAutoOutputEntries()
+    {
+        AutoOutputEntries ??= [];
+        if (ActionType != BeastmasterRuleActionType.AutoOutput || AutoOutputEntries.Count > 0)
+        {
+            return;
+        }
+
+        AutoOutputEntries.Add(new BeastmasterRuleAutoOutputEntry
+        {
+            Target = AutoOutputTarget,
+            Mode = AutoOutputEnabled ? BeastmasterRuleAutoOutputMode.Enable : BeastmasterRuleAutoOutputMode.Disable,
+            WhistleOneEnabled = AutoOutputWhistleOneEnabled,
+            WhistleTwoEnabled = AutoOutputWhistleTwoEnabled,
+            WhistleThreeEnabled = AutoOutputWhistleThreeEnabled,
+            WhistleOneThreshold = AutoOutputWhistleOneThreshold,
+            WhistleTwoThreshold = AutoOutputWhistleTwoThreshold,
+            WhistleThreeThreshold = AutoOutputWhistleThreeThreshold,
+            Option = AutoOutputOption,
+        });
+    }
 
     public bool TryValidate(out string error)
     {
@@ -212,20 +249,51 @@ public sealed class BeastmasterRuleDefinition
             return false;
         }
 
-        if (ActionType == BeastmasterRuleActionType.AutoOutput && !Enum.IsDefined(AutoOutputTarget))
+        if (ActionType == BeastmasterRuleActionType.AutoOutput)
         {
-            error = "自动输出管理项目无效。";
-            return false;
-        }
+            AutoOutputEntries ??= [];
+            if (AutoOutputEntries.Count == 0)
+            {
+                error = "自动输出管理至少需要选择一个功能块。";
+                return false;
+            }
 
-        if (ActionType == BeastmasterRuleActionType.AutoOutput
-            && IsAutoOutputWhistleTarget(AutoOutputTarget)
-            && (AutoOutputWhistleOneThreshold is < 1f or > 100f
-                || AutoOutputWhistleTwoThreshold is < 1f or > 100f
-                || AutoOutputWhistleThreeThreshold is < 1f or > 100f))
-        {
-            error = "自动输出管理血量阈值必须在 1%~100% 之间。";
-            return false;
+            if (AutoOutputEntries.Count > 50)
+            {
+                error = "每条规则最多管理 50 个自动输出功能块。";
+                return false;
+            }
+
+            var seenTargets = new HashSet<BeastmasterRuleAutoOutputTarget>();
+            foreach (var entry in AutoOutputEntries)
+            {
+                if (!Enum.IsDefined(entry.Target) || !Enum.IsDefined(entry.Mode))
+                {
+                    error = "自动输出管理项目无效。";
+                    return false;
+                }
+
+                if (!seenTargets.Add(entry.Target))
+                {
+                    error = $"自动输出管理项目“{BeastmasterRuleActions.GetAutoOutputTargetName(entry.Target)}”重复。";
+                    return false;
+                }
+
+                if (entry.Mode == BeastmasterRuleAutoOutputMode.NoChange)
+                {
+                    error = $"自动输出管理项目“{BeastmasterRuleActions.GetAutoOutputTargetName(entry.Target)}”未选择开启或关闭。";
+                    return false;
+                }
+
+                if (IsAutoOutputWhistleTarget(entry.Target)
+                    && (entry.WhistleOneThreshold is < 1f or > 100f
+                        || entry.WhistleTwoThreshold is < 1f or > 100f
+                        || entry.WhistleThreeThreshold is < 1f or > 100f))
+                {
+                    error = "自动输出管理血量阈值必须在 1%~100% 之间。";
+                    return false;
+                }
+            }
         }
 
         return true;
@@ -545,6 +613,21 @@ public sealed class BeastmasterRuleSetDefinition
                 .AppendLine($"自动输出阈值2|{rule.AutoOutputWhistleTwoThreshold.ToString(CultureInfo.InvariantCulture)}")
                 .AppendLine($"自动输出阈值3|{rule.AutoOutputWhistleThreeThreshold.ToString(CultureInfo.InvariantCulture)}")
                 .AppendLine($"自动输出选项|{rule.AutoOutputOption}");
+            rule.EnsureAutoOutputEntries();
+            builder.AppendLine($"自动输出项数|{rule.AutoOutputEntries.Count}");
+            for (var entryIndex = 0; entryIndex < rule.AutoOutputEntries.Count; entryIndex++)
+            {
+                var entry = rule.AutoOutputEntries[entryIndex];
+                builder.AppendLine($"自动输出项{entryIndex}项目|{entry.Target}")
+                    .AppendLine($"自动输出项{entryIndex}模式|{entry.Mode}")
+                    .AppendLine($"自动输出项{entryIndex}口令1|{entry.WhistleOneEnabled}")
+                    .AppendLine($"自动输出项{entryIndex}口令2|{entry.WhistleTwoEnabled}")
+                    .AppendLine($"自动输出项{entryIndex}口令3|{entry.WhistleThreeEnabled}")
+                    .AppendLine($"自动输出项{entryIndex}阈值1|{entry.WhistleOneThreshold.ToString(CultureInfo.InvariantCulture)}")
+                    .AppendLine($"自动输出项{entryIndex}阈值2|{entry.WhistleTwoThreshold.ToString(CultureInfo.InvariantCulture)}")
+                    .AppendLine($"自动输出项{entryIndex}阈值3|{entry.WhistleThreeThreshold.ToString(CultureInfo.InvariantCulture)}")
+                    .AppendLine($"自动输出项{entryIndex}选项|{entry.Option}");
+            }
             for (var conditionIndex = 0; conditionIndex < rule.Conditions.Count; conditionIndex++)
             {
                 var condition = rule.Conditions[conditionIndex];
@@ -644,6 +727,14 @@ public sealed class BeastmasterRuleSetDefinition
             return true;
         }
 
+        if (key.StartsWith("自动输出项", StringComparison.Ordinal)
+            && key.Length > 5
+            && char.IsDigit(key[5])
+            && TryAssignAutoOutputEntry(rule, key, value))
+        {
+            return true;
+        }
+
         switch (key)
         {
             case "名称": rule.Name = value; return true;
@@ -674,6 +765,7 @@ public sealed class BeastmasterRuleSetDefinition
             case "自动输出阈值2" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var thresholdTwo): rule.AutoOutputWhistleTwoThreshold = thresholdTwo; return true;
             case "自动输出阈值3" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var thresholdThree): rule.AutoOutputWhistleThreeThreshold = thresholdThree; return true;
             case "自动输出选项" when bool.TryParse(value, out var autoOption): rule.AutoOutputOption = autoOption; return true;
+            case "自动输出项数": return true;
             default: return false;
         }
     }
@@ -712,9 +804,45 @@ public sealed class BeastmasterRuleSetDefinition
         static bool Set(Action action) { action(); return true; }
     }
 
+    private static bool TryAssignAutoOutputEntry(BeastmasterRuleDefinition rule, string key, string value)
+    {
+        var fieldStart = 5;
+        while (fieldStart < key.Length && char.IsDigit(key[fieldStart])) fieldStart++;
+        if (fieldStart == 5
+            || !int.TryParse(key[5..fieldStart], NumberStyles.None, CultureInfo.InvariantCulture, out var index)
+            || index is < 0 or >= 50)
+        {
+            return false;
+        }
+
+        rule.AutoOutputEntries ??= [];
+        while (rule.AutoOutputEntries.Count <= index) rule.AutoOutputEntries.Add(new BeastmasterRuleAutoOutputEntry());
+        var entry = rule.AutoOutputEntries[index];
+        var field = key[fieldStart..];
+        return field switch
+        {
+            "项目" when Enum.TryParse<BeastmasterRuleAutoOutputTarget>(value, out var target) => Set(() => entry.Target = target),
+            "模式" when Enum.TryParse<BeastmasterRuleAutoOutputMode>(value, out var mode) => Set(() => entry.Mode = mode),
+            "口令1" when bool.TryParse(value, out var one) => Set(() => entry.WhistleOneEnabled = one),
+            "口令2" when bool.TryParse(value, out var two) => Set(() => entry.WhistleTwoEnabled = two),
+            "口令3" when bool.TryParse(value, out var three) => Set(() => entry.WhistleThreeEnabled = three),
+            "阈值1" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var thresholdOne) => Set(() => entry.WhistleOneThreshold = thresholdOne),
+            "阈值2" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var thresholdTwo) => Set(() => entry.WhistleTwoThreshold = thresholdTwo),
+            "阈值3" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var thresholdThree) => Set(() => entry.WhistleThreeThreshold = thresholdThree),
+            "选项" when bool.TryParse(value, out var option) => Set(() => entry.Option = option),
+            _ => false,
+        };
+
+        static bool Set(Action action) { action(); return true; }
+    }
+
     private void EnsureImportedConditions()
     {
-        foreach (var rule in Rules) rule.EnsureConditions();
+        foreach (var rule in Rules)
+        {
+            rule.EnsureConditions();
+            rule.EnsureAutoOutputEntries();
+        }
     }
 
     private static string Sanitize(string value)
